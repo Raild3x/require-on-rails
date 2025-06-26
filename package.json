@@ -1,0 +1,78 @@
+{
+  "name": "require-on-rails",
+  "displayName": "RequireOnRails",
+  "description": "A Roblox Luau utility extension to simplify working with complex codebase hierarchies",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.101.1"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [ "onStartupFinished" ],
+  "main": "./src/extension.js",
+  "contributes": {
+    "commands": [{
+      "command": "require-on-rails.toggleActive",
+      "title": "Toggle RoR Active"
+    }],
+
+    "configuration": {
+      "type": "object",
+      "title": "RequireOnRails Configuration",
+      "properties": {
+        "require-on-rails.startsImmediately": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether to start the extension as soon as vscode finishes loading."
+        },
+
+        "require-on-rails.tryToAddImport": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether or not the system will try to add the import statement automatically when you open a file that is nissing it."
+        },
+        "require-on-rails.importOpacity": {
+          "type": "number",
+          "default": 0.35,
+          "description": "The opacity of the require override in the editor. Ex: `require = require('@Import')`"
+        },
+        "require-on-rails.importString": {
+          "type": "string",
+          "default": "@Import",
+          "description": "The string path to use for the require override in the editor."
+        },
+
+        "require-on-rails.directoriesToScan": {
+          "type": "array",
+          "default": ["src", "Packages", "ServerPackages"],
+          "description": "Directories to scan for generating Luau file aliases. Relative to the workspace root.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "require-on-rails.ignoreDirectories": {
+          "type": "array",
+          "default": ["__index", "__Index", "_Index", "_index"],
+          "description": "Directories to ignore when scanning for Luau files to generate aliases.",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "pretest": "npm run lint",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.101.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "20.x",
+    "eslint": "^9.25.1",
+    "@vscode/test-cli": "^0.0.10",
+    "@vscode/test-electron": "^2.5.2"
+  }
+}
