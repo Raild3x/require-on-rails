@@ -23,18 +23,19 @@
       "properties": {
         "require-on-rails.startsImmediately": {
           "type": "boolean",
-          "default": true,
+          "default": false,
           "description": "Whether to start the extension as soon as vscode finishes loading."
         },
+
 
         "require-on-rails.tryToAddImport": {
           "type": "boolean",
           "default": true,
-          "description": "Whether or not the system will try to add the import statement automatically when you open a file that is nissing it."
+          "description": "Whether or not the system will try to add the contextual import generator statement automatically when you open a file that is missing it."
         },
         "require-on-rails.importOpacity": {
           "type": "number",
-          "default": 0.35,
+          "default": 0.45,
           "description": "The opacity of the require override in the editor. Ex: `require = require('@Import')`"
         },
         "require-on-rails.importString": {
@@ -43,9 +44,10 @@
           "description": "The string path to use for the require override in the editor."
         },
 
+
         "require-on-rails.directoriesToScan": {
           "type": "array",
-          "default": ["src", "Packages", "ServerPackages"],
+          "default": ["src/Server", "src/Client", "src/Shared", "Packages", "ServerPackages"],
           "description": "Directories to scan for generating Luau file aliases. Relative to the workspace root.",
           "items": {
             "type": "string"
@@ -53,8 +55,16 @@
         },
         "require-on-rails.ignoreDirectories": {
           "type": "array",
-          "default": ["__index", "__Index", "_Index", "_index"],
+          "default": ["_Index"],
           "description": "Directories to ignore when scanning for Luau files to generate aliases.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "require-on-rails.supportedExtensions": {
+          "type": "array",
+          "default": [".lua", ".luau"],
+          "description": "File extensions to consider when generating Luau file aliases. (Dont mess with this)",
           "items": {
             "type": "string"
           }

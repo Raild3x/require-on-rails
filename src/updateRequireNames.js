@@ -6,10 +6,10 @@ function updateRequireNames(newFilePath, oldFilePath) {
     const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
 
     const config = vscode.workspace.getConfiguration('require-on-rails');
-    const supportedExtensions = config.get('supportedExtensions', ['.lua', '.luau']);
+    const supportedExtensions = config.get('supportedExtensions');
     const requirePrefix = config.get('requirePrefix', '@');
-    const directoriesToScan = ['src'] //config.get('directoriesToScan', );
-    const ignoreDirectories = config.get('ignoreDirectories', []);
+    const directoriesToScan = config.get('directoriesToScan');
+    const ignoreDirectories = config.get('ignoreDirectories');
 
     // Compose scan roots
     const scanRoots = directoriesToScan.map(dir => path.join(workspaceRoot, dir));

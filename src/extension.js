@@ -6,7 +6,110 @@ const { hideLines } = require('./hideLines');
 
 let isActive = false;
 let statusBarItem;
-let subscriptionsToToggle = [];
+
+//----------------------------------------------------------------------------------------------
+
+// Store watcher disposables for enable/disable
+let watcherDisposables = [];
+
+// Store event listener disposables for enable/disable
+let eventListenerDisposables = [];
+
+// --- Watcher Management ---
+
+function enableWatchers() {
+    // Helper to create a watcher for a glob pattern and hook up all events to the same handler
+    function createWatcher(glob, onChange, handler) {
+        const watcher = vscode.workspace.createFileSystemWatcher(glob);
+        watcher.onDidCreate(handler);
+        watcher.onDidDelete(handler);
+        if (onChange) watcher.onDidChange(onChange);
+        watcherDisposables.push(watcher);
+    }
+
+    createWatcher('**/*.luau', false, () => {
+        console.log('Luau file changed, regenerating aliases...');
+        generateFileAliases();
+    });
+    createWatcher('**/*.lua', false, () => {
+        console.log('Lua file changed, regenerating aliases...');
+        generateFileAliases();
+    });
+    createWatcher('**/.requireonrails.aliases.json', true, () => {
+        console.log('.requireonrails.aliases.json changed, regenerating aliases...');
+        debouncedGenerateFileAliases();
+    });
+    createWatcher('**/settings.json', true, () => {
+        console.log('settings.json changed, regenerating aliases...');
+        debouncedGenerateFileAliases();
+    });
+}
+
+function disableWatchers() {
+    watcherDisposables.forEach(sub => sub.dispose());
+    watcherDisposables = [];
+}
+
+// --- Event Listener Management ---
+
+function enableEventListeners() {
+    // Listen for active editor changes to hide lines in Luau files
+    const textEditorListener = vscode.window.onDidChangeActiveTextEditor((editor) => {
+        if (editor && (editor.document.languageId === 'luau' || editor.document.languageId === 'lua')) {
+            hideLines(editor);
+        }
+    });
+    eventListenerDisposables.push(textEditorListener);
+
+    // Listen for document changes to hide lines in Luau files
+    const textDocumentListener = vscode.workspace.onDidChangeTextDocument((event) => {
+        const editor = vscode.window.activeTextEditor;
+        if (editor && editor.document === event.document) {
+            hideLines(editor);
+        }
+    });
+    eventListenerDisposables.push(textDocumentListener);
+
+    // Listen for file renames (future: update require names)
+    const renameListener = vscode.workspace.onDidRenameFiles((event) => {
+        event.files.forEach((file) => {
+            console.log(`File renamed from ${file.oldUri.fsPath} to ${file.newUri.fsPath}`);
+            // updateRequireNames(file.newUri.fsPath, file.oldUri.fsPath);
+        });
+    });
+    eventListenerDisposables.push(renameListener);
+}
+
+function disableEventListeners() {
+    eventListenerDisposables.forEach(sub => sub.dispose());
+    eventListenerDisposables = [];
+}
+
+//----------------------------------------------------------------------------------------------
+// --- Extension Feature Toggle ---
+
+function enableExtensionFeatures() {
+    isActive = true;
+
+    // Ensure clean state before enabling
+    disableWatchers();
+    disableEventListeners();
+
+    enableWatchers();
+    enableEventListeners();
+
+    generateFileAliases();
+    setStatusBarText();
+}
+
+function disableExtensionFeatures() {
+    isActive = false;
+
+    disableWatchers();
+    disableEventListeners();
+
+    setStatusBarText();
+}
 
 function setStatusBarText() {
     if (statusBarItem) {
@@ -15,64 +118,33 @@ function setStatusBarText() {
     }
 }
 
+//----------------------------------------------------------------------------------------------
+
 function toggleExtension() {
-    isActive = !isActive;
-    setStatusBarText();
-    if (isActive) {
+    if (!isActive) {
         enableExtensionFeatures();
     } else {
         disableExtensionFeatures();
     }
 }
 
-function enableExtensionFeatures() {
-    // Re-register all event listeners
-    subscriptionsToToggle.forEach(sub => vscode.Disposable.from(sub).dispose());
-    subscriptionsToToggle = [];
-
-    const TextEditorConnection = vscode.window.onDidChangeActiveTextEditor((editor) => {
-        if (editor && editor.document.languageId === 'luau') {
-            hideLines(editor);
+// Debounce utility (shared instance for all watchers)
+let debounceTimer = null;
+let debouncePending = false;
+function debouncedGenerateFileAliases() {
+    debouncePending = true;
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        if (debouncePending) {
+            debouncePending = false;
+            // Temporarily disable watchers to prevent retriggering
+            disableWatchers();
+            generateFileAliases();
+            // Re-enable watchers after a short delay to allow file writes to settle
+            setTimeout(enableWatchers, 500);
         }
-    });
-    subscriptionsToToggle.push(TextEditorConnection);
-
-    const TextDocumentConnection = vscode.workspace.onDidChangeTextDocument((event) => {
-        const editor = vscode.window.activeTextEditor;
-        if (editor && editor.document === event.document) {
-            hideLines(editor);
-        }
-    });
-    subscriptionsToToggle.push(TextDocumentConnection);
-
-    const fileWatcher = vscode.workspace.createFileSystemWatcher('**/*.luau');
-    fileWatcher.onDidCreate((uri) => {
-        generateFileAliases();
-    });
-    fileWatcher.onDidDelete((uri) => {
-        generateFileAliases();
-    });
-    fileWatcher.onDidChange((uri) => {
-        // No-op for now
-    });
-    subscriptionsToToggle.push(fileWatcher);
-
-    const RenameConnection = vscode.workspace.onDidRenameFiles((event) => {
-        event.files.forEach((file) => {
-            // You can call your update logic here, e.g.:
-            updateRequireNames(file.newUri.fsPath, file.oldUri.fsPath);
-        });
-    });
-    subscriptionsToToggle.push(RenameConnection);
-
-    generateFileAliases();
-}
-
-function disableExtensionFeatures() {
-    // Dispose all event listeners
-    subscriptionsToToggle.forEach(sub => sub.dispose());
-    subscriptionsToToggle = [];
-    setStatusBarText();
+    }, 500);
 }
 
 function activate(context) {
@@ -100,9 +172,9 @@ function activate(context) {
         }
     });
 
-    if (config.get("startsImmediately", true)) {
-        isActive = true;
-        enableExtensionFeatures();
+    if (config.get("startsImmediately")) {
+        console.log('RequireOnRails is starting immediately as per configuration.');
+        toggleExtension();
     }
 }
 
