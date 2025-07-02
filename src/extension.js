@@ -2,7 +2,8 @@ const vscode = require('vscode');
 // const path = require('path');
 const { generateFileAliases } = require('./updateLuaFileAliases');
 const { updateRequireNames } = require('./updateRequireNames');
-const { hideLines } = require('./hideLines');
+const { hideLines, unhideLines } = require('./hideLines');
+const { unpackProjectTemplate } = require('./unpackProjectTemplate');
 
 let isActive = false;
 let statusBarItem;
@@ -27,13 +28,13 @@ function enableWatchers() {
         watcherDisposables.push(watcher);
     }
 
-    createWatcher('**/*.luau', false, () => {
-        console.log('Luau file changed, regenerating aliases...');
-        generateFileAliases();
+    createWatcher('**/*.luau', false, (data) => {
+        console.log('Luau file changed, regenerating aliases...', data.path);
+        debouncedGenerateFileAliases();
     });
-    createWatcher('**/*.lua', false, () => {
-        console.log('Lua file changed, regenerating aliases...');
-        generateFileAliases();
+    createWatcher('**/*.lua', false, (data) => {
+        console.log('Lua file changed, regenerating aliases...', data.path);
+        debouncedGenerateFileAliases();
     });
     createWatcher('**/.requireonrails.aliases.json', true, () => {
         console.log('.requireonrails.aliases.json changed, regenerating aliases...');
@@ -64,17 +65,31 @@ function enableEventListeners() {
     // Listen for document changes to hide lines in Luau files
     const textDocumentListener = vscode.workspace.onDidChangeTextDocument((event) => {
         const editor = vscode.window.activeTextEditor;
-        if (editor && editor.document === event.document) {
-            hideLines(editor);
+        if (editor && editor.document === event.document && 
+            (editor.document.languageId === 'luau' || editor.document.languageId === 'lua')) {
+            // Use a small delay to ensure the document has been fully updated
+            setTimeout(() => {
+                hideLines(editor);
+            }, 10);
         }
     });
     eventListenerDisposables.push(textDocumentListener);
 
+    // Listen for when documents are opened to apply decorations
+    const documentOpenListener = vscode.workspace.onDidOpenTextDocument((document) => {
+        const editor = vscode.window.activeTextEditor;
+        if (editor && editor.document === document && 
+            (document.languageId === 'luau' || document.languageId === 'lua')) {
+            hideLines(editor);
+        }
+    });
+    eventListenerDisposables.push(documentOpenListener);
+
     // Listen for file renames (future: update require names)
     const renameListener = vscode.workspace.onDidRenameFiles((event) => {
         event.files.forEach((file) => {
-            console.log(`File renamed from ${file.oldUri.fsPath} to ${file.newUri.fsPath}`);
-            // updateRequireNames(file.newUri.fsPath, file.oldUri.fsPath);
+            //console.log(`File renamed from ${file.oldUri.fsPath} to ${file.newUri.fsPath}`);
+            updateRequireNames(file.newUri.fsPath, file.oldUri.fsPath);
         });
     });
     eventListenerDisposables.push(renameListener);
@@ -109,6 +124,8 @@ function disableExtensionFeatures() {
     disableEventListeners();
 
     setStatusBarText();
+
+    unhideLines(vscode.window.activeTextEditor);
 }
 
 function setStatusBarText() {
@@ -164,6 +181,12 @@ function activate(context) {
         toggleExtension();
     });
     context.subscriptions.push(toggleCommand);
+
+    // Register setup default project command
+    const setupProjectCommand = vscode.commands.registerCommand('require-on-rails.setupDefaultProject', () => {
+        unpackProjectTemplate();
+    });
+    context.subscriptions.push(setupProjectCommand);
 
     // Clean up on deactivate
     context.subscriptions.push({

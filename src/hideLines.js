@@ -1,12 +1,14 @@
 const vscode = require('vscode');
 
+// Store decoration types globally to properly dispose of them
+let currentDecorationType = null;
+
 // Utility to escape regex special characters in a string
 function escapeRegExp(string) {
     return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function hideLines(editor) {
-
     const editorLang = editor.document.languageId;
     if (!editor || (editorLang !== 'luau' && editorLang !== 'lua')) {
         return;
@@ -14,14 +16,36 @@ function hideLines(editor) {
 
     const text = editor.document.getText();
 
+    // Don't do anything for empty files
+    if (!text.trim()) {
+        return;
+    }
+
+    // Clear any existing decorations first
+    unhideLines(editor);
+
     const config = vscode.workspace.getConfiguration('require-on-rails');
-    const importString = config.get("importString") || "@Import";
-    const importRequireDef = `require = require('${importString}')(script) :: typeof(require)`;
-    const importRequireDefAlt = `require = require("${importString}")(script) :: typeof(require)`;
+    const importModulePaths = config.get("importModulePaths");
+    const pathsArray = Array.isArray(importModulePaths) ? importModulePaths : [importModulePaths];
+    const defaultImportModulePath = pathsArray[0];
+    const importRequireDef = `require = require(${defaultImportModulePath})(script) :: typeof(require)`;
     const tryToAddImportRequire = config.get("tryToAddImportRequire");
 
-    // Look for the import require def. If its not present then add it
-    if (tryToAddImportRequire && !(text.includes(importRequireDef) || text.includes(importRequireDefAlt))) {
+    // Look for any of the valid import require definitions
+    const hasValidImportRequire = pathsArray.some(path => {
+        const def = `require = require(${path})(script) :: typeof(require)`;
+        return text.includes(def);
+    });
+
+    // Check if the file contains require statements with '@' symbol
+    const requireWithAtPattern = /require\s*\(\s*["']([^"']*@[^"']*)["']\s*\)/;
+    const hasRequireWithAtSymbol = requireWithAtPattern.test(text);
+    
+    // Only prompt to add import require definition if:
+    // 1. tryToAddImportRequire is enabled
+    // 2. There's no valid import require definition present
+    // 3. There's at least one require statement with '@' symbol
+    if (tryToAddImportRequire && !hasValidImportRequire && hasRequireWithAtSymbol) {
         // Prompt the user for if they want to add the import require definition, if they do then append it to the top of the file
         vscode.window.showWarningMessage(
             `This file is missing the import require definition. Would you like to add it?`,
@@ -29,11 +53,45 @@ function hideLines(editor) {
         ).then((selection) => {
             if (selection === 'Yes') {
                 const importRequire = `${importRequireDef}\n`;
-                const firstLine = editor.document.lineAt(0);
+                let insertLine = 0;
+                
+                const lines = text.split('\n');
+                
+                // First, look for existing 'require(' on global scope
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i].trim();
+                    if (line.startsWith('require(') || /^[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*require\(/.test(line)) {
+                        insertLine = i;
+                        break;
+                    }
+                }
+                
+                // If no require found, look for ReplicatedStorage service
+                if (insertLine === 0) {
+                    for (let i = 0; i < lines.length; i++) {
+                        const line = lines[i].trim();
+                        if (line.includes('ReplicatedStorage') && line.includes('game:GetService')) {
+                            // Find first empty line after this line
+                            for (let j = i + 1; j < lines.length; j++) {
+                                if (lines[j].trim() === '') {
+                                    insertLine = j;
+                                    break;
+                                }
+                            }
+                            // If no empty line found, insert right after the ReplicatedStorage line
+                            if (insertLine === 0) {
+                                insertLine = i + 1;
+                            }
+                            break;
+                        }
+                    }
+                }
+                
+                const targetLine = editor.document.lineAt(insertLine);
                 const edit = new vscode.WorkspaceEdit();
-                edit.insert(editor.document.uri, firstLine.range.start, importRequire);
+                edit.insert(editor.document.uri, targetLine.range.start, importRequire);
                 vscode.workspace.applyEdit(edit).then(() => {
-                    editor.revealRange(firstLine.range);
+                    editor.revealRange(targetLine.range);
                     hideLines(editor); // Call hideLines again to apply the decoration
                 });
             }
@@ -41,14 +99,18 @@ function hideLines(editor) {
         return; // Exit early if the import require definition is not present
     }
 
-    const decorationType = vscode.window.createTextEditorDecorationType({
+    // Create new decoration type
+    currentDecorationType = vscode.window.createTextEditorDecorationType({
         opacity: config.get("importOpacity").toString(), // Makes the text nearly invisible        
     });
 
     const linesToHide = [];
-    // Build regex dynamically based on importString, escaping special characters
+    // Build regex dynamically based on all importModulePaths, escaping special characters
+    const pathPatterns = pathsArray.map(path => 
+        escapeRegExp(`require = require(${path})(script) :: typeof(require)`)
+    ).join('|');
     const regex = new RegExp(
-        `-- selene: allow\\(incorrect_standard_library_use\\)|${escapeRegExp(importRequireDef)}|${escapeRegExp(importRequireDefAlt)}`
+        `-- selene: allow\\(incorrect_standard_library_use\\)|${pathPatterns}`
     );
 
     text.split('\n').forEach((line, index) => {
@@ -58,15 +120,19 @@ function hideLines(editor) {
         }
     });
     
-    editor.setDecorations(decorationType, linesToHide);
+    editor.setDecorations(currentDecorationType, linesToHide);
 }
 
 function unhideLines(editor) {
-    const decorationType = vscode.window.createTextEditorDecorationType({
-        opacity: '1', // Restores the original visibility
-    });
-
-    editor.setDecorations(decorationType, []);
+    if (!editor) {
+        return;
+    }
+    
+    // Dispose of the current decoration type if it exists
+    if (currentDecorationType) {
+        currentDecorationType.dispose();
+        currentDecorationType = null;
+    }
 }
 
-module.exports = { hideLines };
+module.exports = { hideLines, unhideLines };

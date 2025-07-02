@@ -1,0 +1,9 @@
+{
+    "aliases": {
+    },
+    "languageMode": "nonstrict",
+    "lint": {
+        "*": true
+    },
+    "typeErrors": true
+}

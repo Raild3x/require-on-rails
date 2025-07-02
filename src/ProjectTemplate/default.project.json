@@ -1,0 +1,98 @@
+{
+    "name": "Roblox_Project",
+    "globIgnorePaths": [
+        "**/.package-lock.json",
+        "**/start.server.luau",
+        "**/start.client.luau",
+        "**/_ReplicatedFirst",
+        "**/_Import"
+    ],
+    "tree": {
+        "$className": "DataModel",
+        "ReplicatedStorage": {
+            "$className": "ReplicatedStorage",
+            "Assets": {
+                "$className": "Folder"
+            },
+            "src": {
+                "$className": "Folder",
+                "Packages": {
+                    "$className": "Folder",
+                    "$path": "Packages"
+                },
+                "Client": {
+                    "$className": "Folder",
+                    "$path": "src/Client"
+                },
+                "Shared": {
+                    "$className": "Folder",
+                    "$path": "src/Shared"
+                },
+                "_Import": {
+                    "$className": "ModuleScript",
+                    "$path": "src/_Import.luau"
+                }
+            }
+        },
+        "ReplicatedFirst": {
+            "$className": "ReplicatedFirst",
+            "$properties": {
+                "Attributes": {
+                    "SkipLoadingScreen": {
+                        "Bool": true
+                    }
+                }
+            },
+            "src": {
+                "$className": "Folder",
+                "$path": "src/_ReplicatedFirst"
+            }
+        },
+        "ServerScriptService": {
+            "$className": "ServerScriptService",
+            "src": {
+                "$className": "Folder",
+                "Server": {
+                    "$className": "Folder",
+                    "$path": "src/Server"
+                },
+                "ServerPackages": {
+                    "$className": "Folder",
+                    "$path": "ServerPackages"
+                },
+                "Server_Bootstrapper": {
+                    "$path": "src/Server/start.server.luau"
+                }
+            }
+        },
+        "ServerStorage": {
+            "$className": "ServerStorage"
+        },
+        "StarterPlayer": {
+            "$className": "StarterPlayer",
+            "StarterPlayerScripts": {
+                "$className": "StarterPlayerScripts",
+                "src": {
+                    "$className": "Folder",
+                    "Client_Bootstrapper": {
+                        "$path": "src/Client/start.client.luau"
+                    }
+                }
+            }
+        },
+        "HttpService": {
+            "$className": "HttpService",
+            "$properties": {
+                "HttpEnabled": true
+            }
+        },
+        "Workspace": {
+            "$properties": {
+                "StreamingEnabled": true
+            },
+            "Characters": {
+                "$className": "Folder"
+            }
+        }
+    }
+}

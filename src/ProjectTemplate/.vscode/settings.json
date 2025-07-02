@@ -1,0 +1,8 @@
+{
+    "luau-lsp.sourcemap.rojoProjectFile": "default.project.json",
+
+    "require-on-rails.importModulePaths": [
+        "ReplicatedStorage.src._Import"
+    ]
+
+}

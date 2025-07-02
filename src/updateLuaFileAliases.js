@@ -87,11 +87,20 @@ ${aliasLines.join('\n')}
 }`;
 }
 
-// Helper to check if the file is located under a directory named in ignoreDirectories
-function isUnderIgnoredDir(filePath, rootDir, ignoreDirectories) {
+// Helper to check if the file is located under a directory that matches any ignore pattern
+function isUnderIgnoredDir(filePath, rootDir, ignorePatterns) {
     let currentDir = path.dirname(filePath);
     while (currentDir !== rootDir) {
-        if (ignoreDirectories.some(ignored => path.basename(currentDir).toLowerCase() === ignored.toLowerCase())) {
+        const dirName = path.basename(currentDir);
+        if (ignorePatterns.some(pattern => {
+            try {
+                return new RegExp(pattern).test(dirName);
+            } catch (e) {
+                // If regex is invalid, fall back to exact string matching
+                console.warn(`Invalid regex pattern: ${pattern}, falling back to exact match`);
+                return dirName.toLowerCase() === pattern.toLowerCase();
+            }
+        })) {
             return true;
         }
         currentDir = path.dirname(currentDir);
@@ -106,12 +115,21 @@ function shouldIgnoreFile(fileName, ignoreList) {
 
 
 // Recursive function to scan a directory and collect files by basename
-function scanDir(dir, rootDir, supportedExtensions, ignoreDirectories, ignoreList, basenameMap, workspaceRoot) {
-    // If this directory or any of its parents (up to rootDir) is in ignoreDirectories, skip entirely
+function scanDir(dir, rootDir, supportedExtensions, ignorePatterns, ignoreList, basenameMap, workspaceRoot) {
+    // If this directory or any of its parents (up to rootDir) matches any ignore pattern, skip entirely
     let skip = false;
     let checkDir = dir;
     while (checkDir !== rootDir && checkDir !== path.dirname(checkDir)) {
-        if (ignoreDirectories.some(ignored => path.basename(checkDir).toLowerCase() === ignored.toLowerCase())) {
+        const dirName = path.basename(checkDir);
+        if (ignorePatterns.some(pattern => {
+            try {
+                return new RegExp(pattern).test(dirName);
+            } catch (e) {
+                // If regex is invalid, fall back to exact string matching
+                console.warn(`Invalid regex pattern: ${pattern}, falling back to exact match`);
+                return dirName.toLowerCase() === pattern.toLowerCase();
+            }
+        })) {
             skip = true;
             break;
         }
@@ -128,7 +146,7 @@ function scanDir(dir, rootDir, supportedExtensions, ignoreDirectories, ignoreLis
         if (fs.existsSync(initFilePath)) {
             foundInit = initFilePath;
             const folderName = path.basename(dir);
-            if (!isUnderIgnoredDir(initFilePath, rootDir, ignoreDirectories)) {
+            if (!isUnderIgnoredDir(initFilePath, rootDir, ignorePatterns)) {
                 if (!basenameMap[folderName]) basenameMap[folderName] = [];
                 basenameMap[folderName].push({
                     path: initFilePath.replace(workspaceRoot + '\\', '').replace(/\\/g, '/')
@@ -140,7 +158,7 @@ function scanDir(dir, rootDir, supportedExtensions, ignoreDirectories, ignoreLis
     files.forEach(file => {
         const filePath = path.join(dir, file.name);
         if (file.isDirectory()) {
-            scanDir(filePath, rootDir, supportedExtensions, ignoreDirectories, ignoreList, basenameMap, workspaceRoot);
+            scanDir(filePath, rootDir, supportedExtensions, ignorePatterns, ignoreList, basenameMap, workspaceRoot);
         } else if (file.isFile() && supportedExtensions.includes(path.extname(file.name))) {
             if (shouldIgnoreFile(file.name, ignoreList)) {
                 return;
@@ -149,7 +167,7 @@ function scanDir(dir, rootDir, supportedExtensions, ignoreDirectories, ignoreLis
             if (foundInit && file.name.startsWith('init.')) {
                 return;
             }
-            if (!isUnderIgnoredDir(filePath, rootDir, ignoreDirectories)) {
+            if (!isUnderIgnoredDir(filePath, rootDir, ignorePatterns)) {
                 const aliasKey = path.parse(file.name).name;
                 if (!basenameMap[aliasKey]) basenameMap[aliasKey] = [];
                 basenameMap[aliasKey].push({
@@ -166,9 +184,9 @@ function generateFileAliases() {
     const config = vscode.workspace.getConfiguration(extenionName);
     const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
 
-    const directoriesToScan = config.get('directoriesToScan');
-    const ignoreDirectories = config.get('ignoreDirectories');
-    const supportedExtensions = config.get('supportedExtensions');
+    const directoriesToScan = config.get('directoriesToScan') || [];
+    const ignoreDirectories = config.get('ignoreDirectories') || [];
+    const supportedExtensions = config.get('supportedExtensions', ['.lua', '.luau']);
     const ignoreList = ['.server', '.client'];
     const rootDirs = directoriesToScan
         .map(dir => getDirPath(workspaceRoot, dir))
@@ -176,7 +194,7 @@ function generateFileAliases() {
     const luaurcPath = getDirPath(workspaceRoot, '.luaurc');
     const extensionAliasPath = getDirPath(workspaceRoot, '.requireonrails.json');
 
-        // Read and update the .luaurc file with generated aliases
+    // Read and update the .luaurc file with generated aliases
     let luaurc = {};
     if (fs.existsSync(luaurcPath)) {
         const rawData = fs.readFileSync(luaurcPath, 'utf8');
@@ -246,20 +264,19 @@ function generateFileAliases() {
     // console.log("Current aliases after processing:", JSON.stringify(currentAliases, null, 2));
     luaurc.aliases = compiledAliases;
 
-    // Now just pass the flat newAutoGeneratedAliases object to the grouping logic in writeLuaurcWithSeparation
-    // const luaurcString = writeLuaurcWithSeparation(compiledAliases);
-    const luaurcString = JSON.stringify(luaurc, null, 4);
-    fs.writeFileSync(
-        luaurcPath,
-        luaurcString
-    );
+    // Create a proper JSON structure ensuring aliases is always an object
+    const finalLuaurc = {
+        aliases: compiledAliases || {},
+        ...Object.fromEntries(Object.entries(luaurc).filter(([key]) => key !== 'aliases'))
+    };
+
+    // Write with proper JSON formatting
+    const luaurcString = JSON.stringify(finalLuaurc, null, 4);
+    fs.writeFileSync(luaurcPath, luaurcString);
 
     // Write updated extension alias tracker file
     const newExtensionJsonContent = JSON.stringify(extensionAliases, null, 4)
-    fs.writeFileSync(
-        extensionAliasPath,
-        newExtensionJsonContent
-    );
+    fs.writeFileSync(extensionAliasPath, newExtensionJsonContent);
     // console.log('Updated .luaurc aliases:', JSON.stringify(luaurc.aliases, null, 2));
     // console.log('Updated extension alias tracker:', newExtensionJsonContent);
 }
