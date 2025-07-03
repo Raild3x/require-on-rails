@@ -1,4 +1,6 @@
 const vscode = require('vscode');
+const path = require('path');
+const fs = require('fs');
 
 // Store decoration types globally to properly dispose of them
 let currentDecorationType = null;
@@ -52,44 +54,74 @@ function hideLines(editor) {
             'Yes', 'No'
         ).then((selection) => {
             if (selection === 'Yes') {
-                const importRequire = `${importRequireDef}\n`;
+                const seleneComment = '-- selene: allow(incorrect_standard_library_use)';
+                const importRequire = `${importRequireDef}`;
                 let insertLine = 0;
                 
                 const lines = text.split('\n');
                 
-                // First, look for existing 'require(' on global scope
-                for (let i = 0; i < lines.length; i++) {
-                    const line = lines[i].trim();
-                    if (line.startsWith('require(') || /^[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*require\(/.test(line)) {
-                        insertLine = i;
-                        break;
-                    }
-                }
+                // Check if selene.toml exists in workspace
+                const workspaceFolder = vscode.workspace.getWorkspaceFolder(editor.document.uri);
+                const hasSeleneConfig = workspaceFolder && 
+                    fs.existsSync(path.join(workspaceFolder.uri.fsPath, 'selene.toml'));
                 
-                // If no require found, look for ReplicatedStorage service
-                if (insertLine === 0) {
-                    for (let i = 0; i < lines.length; i++) {
-                        const line = lines[i].trim();
-                        if (line.includes('ReplicatedStorage') && line.includes('game:GetService')) {
-                            // Find first empty line after this line
-                            for (let j = i + 1; j < lines.length; j++) {
-                                if (lines[j].trim() === '') {
-                                    insertLine = j;
-                                    break;
-                                }
+                const preferredImportPlacement = config.get("preferredImportPlacement");
+
+                // Check if selene comment already exists
+                const hasSeleneComment = lines.some(line => 
+                    line.trim() === seleneComment
+                );
+                
+                // Determine insertion line based on preference
+                switch (preferredImportPlacement) {
+                    case "TopOfFile":
+                        insertLine = 0;
+                        break;
+                        
+                    case "BeforeFirstRequire":
+                        // Look for existing 'require(' on global scope
+                        for (let i = 0; i < lines.length; i++) {
+                            const line = lines[i].trim();
+                            if (line.startsWith('require(') || /^[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*require\(/.test(line)) {
+                                insertLine = i;
+                                break;
                             }
-                            // If no empty line found, insert right after the ReplicatedStorage line
-                            if (insertLine === 0) {
-                                insertLine = i + 1;
-                            }
-                            break;
                         }
-                    }
+                        break;
+                        
+                    case "AfterDefiningRobloxServices":
+                        // Look for ReplicatedStorage service or other service definitions
+                        for (let i = 0; i < lines.length; i++) {
+                            const line = lines[i].trim();
+                            if (line.includes('game:GetService')) {
+                                // Find first empty line after this line
+                                for (let j = i + 1; j < lines.length; j++) {
+                                    if (lines[j].trim() === '') {
+                                        insertLine = j;
+                                        break;
+                                    }
+                                }
+                                // If no empty line found, insert right after the service line
+                                if (insertLine === 0) {
+                                    insertLine = i + 1;
+                                }
+                                break;
+                            }
+                        }
+                        break;
                 }
                 
                 const targetLine = editor.document.lineAt(insertLine);
                 const edit = new vscode.WorkspaceEdit();
-                edit.insert(editor.document.uri, targetLine.range.start, importRequire);
+                
+                // Prepare the text to insert
+                let textToInsert = '';
+                if (hasSeleneConfig && !hasSeleneComment) {
+                    textToInsert += seleneComment + '\n';
+                }
+                textToInsert += importRequire + '\n';
+                
+                edit.insert(editor.document.uri, targetLine.range.start, textToInsert);
                 vscode.workspace.applyEdit(edit).then(() => {
                     editor.revealRange(targetLine.range);
                     hideLines(editor); // Call hideLines again to apply the decoration

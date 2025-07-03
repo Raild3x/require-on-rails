@@ -1,8 +1,10 @@
 {
   "name": "require-on-rails",
   "displayName": "RequireOnRails",
-  "description": "A Roblox Luau utility extension to simplify working with complex codebase hierarchies",
+  "description": "An opinionated Roblox Luau utility extension to simplify working with complex codebase hierarchies",
   "version": "0.0.1",
+  "publisher": "Raild3x",
+  "icon": "images/icon_v2.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/Raild3x/require-on-rails"
@@ -14,6 +16,14 @@
     "onStartupFinished"
   ],
   "main": "./src/extension.js",
+  "files": [
+    "src/**/*",
+    "ProjectTemplate",
+    "images/icon_v2.png",
+    "README.md",
+    "CHANGELOG.md",
+    "package.json"
+  ],
   "contributes": {
     "commands": [
       {
@@ -41,7 +51,7 @@
         },
         "require-on-rails.enableAbsolutePathUpdates": {
           "type": "boolean",
-          "default": true,
+          "default": false,
           "description": "Whether to prompt for updating absolute require paths when files are moved between different alias directories."
         },
         "require-on-rails.enableCollisionDetection": {
@@ -63,14 +73,29 @@
         "require-on-rails.importModulePaths": {
           "type": "array",
           "default": [
-            "ReplicatedStorage:FindFirstChild(\"_Import\", true)",
-            "game:GetService(\"ReplicatedStorage\"):FindFirstChild(\"_Import\", true)"
+            "game.ReplicatedStorage.src.Import",
+            "ReplicatedStorage.src.Import",
+            "game:GetService(\"ReplicatedStorage\").src.Import",
+            "game:GetService(\"ReplicatedStorage\"):FindFirstChild(\"Import\", true)",
+            "ReplicatedStorage:FindFirstChild(\"Import\", true)"
           ],
           "description": "The valid values for the `require` override. This is used to generate the contextual import statements. Uses the first value in the array as the default import path if one is not found.",
           "items": {
             "type": "string"
           }
         },
+        "preferredImportPlacement": {
+          "type": "string",
+          "default": "TopOfFile",
+          "enum": ["TopOfFile", "BeforeFirstRequire", "AfterDefiningRobloxServices"],
+          "enumDescriptions": [
+            "Place import at the very top of the file",
+            "Place import before the first require statement",
+            "Place import after Roblox service definitions (game:GetService calls)"
+          ],
+          "description": "Controls where the import require definition is placed when automatically added to files"
+        },
+
         "require-on-rails.directoriesToScan": {
           "type": "array",
           "default": [
@@ -92,23 +117,8 @@
           "items": {
             "type": "string"
           }
-        },
-        "require-on-rails.supportedExtensions": {
-          "type": "array",
-          "default": [
-            ".lua",
-            ".luau"
-          ],
-          "description": "File extensions to consider when generating Luau file aliases and updating require statements. (Do not touch)",
-          "items": {
-            "type": "string"
-          }
-        },
-        "require-on-rails.requirePrefix": {
-          "type": "string",
-          "default": "@",
-          "description": "The prefix character used in require statements (e.g., '@' for require('@ModuleName')). (Do not touch)"
         }
+
       }
     }
   },
@@ -117,8 +127,8 @@
     "pretest": "npm run compile",
     "compile": "echo 'No compilation needed for vanilla JS'",
     "vscode:prepublish": "npm run compile",
-    "package": "vsce package",
-    "publish": "vsce publish"
+    "build": "vsce package",
+    "publish": "node scripts/publish.js"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.6",
@@ -130,5 +140,21 @@
     "@vscode/test-cli": "^0.0.11"
   },
   "dependencies": {
-  }
+  },
+  "galleryBanner": {
+    "color": "#1e1e1e",
+    "theme": "dark"
+  },
+  "categories": [
+    "Other",
+    "Programming Languages"
+  ],
+  "keywords": [
+    "roblox",
+    "luau",
+    "lua",
+    "require",
+    "alias",
+    "import"
+  ]
 }

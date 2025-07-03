@@ -2,6 +2,27 @@ const fs = require('fs');
 const path = require('path');
 const vscode = require('vscode');
 
+const requirePrefix = '@';
+const supportedExtensions = ['.lua', '.luau'];
+
+/**
+ * Helper function to check if directory should be ignored based on regex patterns.
+ * 
+ * @param {string} dirName - Directory name to check
+ * @param {string[]} ignorePatterns - Array of regex patterns or strings to match against
+ * @returns {boolean} True if directory should be ignored
+ */
+function shouldIgnoreDirectory(dirName, ignorePatterns) {
+    return ignorePatterns.some(pattern => {
+        try {
+            return new RegExp(pattern).test(dirName);
+        } catch (e) {
+            console.warn(`Invalid regex pattern: ${pattern}, falling back to exact match`);
+            return dirName.toLowerCase() === pattern.toLowerCase();
+        }
+    });
+}
+
 /**
  * Main function to handle require statement updates when files are renamed or moved.
  * Coordinates various sub-operations based on configuration settings.
@@ -10,6 +31,12 @@ const vscode = require('vscode');
  * @param {string} oldFilePath - The original file path before rename/move operation
  */
 function updateRequireNames(newFilePath, oldFilePath) {
+    // Check if workspace folders exist
+    if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
+        console.log('No workspace folder found. Skipping require name updates.');
+        return;
+    }
+    
     const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
     const config = vscode.workspace.getConfiguration('require-on-rails');
 
@@ -105,23 +132,10 @@ function analyzeFileOperation(newFilePath, oldFilePath) {
  */
 function handleFilenameCollision(newFilePath, newFileBasename, workspaceRoot) {
     const config = vscode.workspace.getConfiguration('require-on-rails');
-    const supportedExtensions = config.get('supportedExtensions') || ['.lua', '.luau']; // Add fallback
     const directoriesToScan = config.get('directoriesToScan');
     const ignoreDirectories = config.get('ignoreDirectories');
     
     const scanRoots = directoriesToScan.map(dir => path.join(workspaceRoot, dir));
-
-    // Helper function to check if directory should be ignored
-    function shouldIgnoreDirectory(dirName, ignorePatterns) {
-        return ignorePatterns.some(pattern => {
-            try {
-                return new RegExp(pattern).test(dirName);
-            } catch (e) {
-                console.warn(`Invalid regex pattern: ${pattern}, falling back to exact match`);
-                return dirName.toLowerCase() === pattern.toLowerCase();
-            }
-        });
-    }
 
     // Check for filename collision
     function checkForCollision(dir) {
@@ -182,9 +196,6 @@ function handleFilenameCollision(newFilePath, newFileBasename, workspaceRoot) {
  * @param {Function} onComplete - Callback function to execute after completion
  */
 function handleBasenameRequireUpdates(operationType, oldFileBasename, newFileBasename, workspaceRoot, onComplete) {
-    const config = vscode.workspace.getConfiguration('require-on-rails');
-    const requirePrefix = config.get('requirePrefix', '@');
-
     vscode.window.showInformationMessage(
         `File was ${operationType}. Update require statements from ${requirePrefix}${oldFileBasename} to ${requirePrefix}${newFileBasename}?`,
         'Yes', 'No'
@@ -210,30 +221,10 @@ function handleBasenameRequireUpdates(operationType, oldFileBasename, newFileBas
  */
 function updateBasenameRequiresInFiles(oldFileBasename, newFileBasename, workspaceRoot) {
     const config = vscode.workspace.getConfiguration('require-on-rails');
-    const supportedExtensions = config.get('supportedExtensions') || ['.lua', '.luau']; // Add fallback
     const directoriesToScan = config.get('directoriesToScan');
     const ignoreDirectories = config.get('ignoreDirectories');
-    const requirePrefix = config.get('requirePrefix', '@');
     
     const scanRoots = directoriesToScan.map(dir => path.join(workspaceRoot, dir));
-
-    /**
-     * Helper function to check if directory should be ignored based on regex patterns.
-     * 
-     * @param {string} dirName - Directory name to check
-     * @param {string[]} ignorePatterns - Array of regex patterns or strings to match against
-     * @returns {boolean} True if directory should be ignored
-     */
-    function shouldIgnoreDirectory(dirName, ignorePatterns) {
-        return ignorePatterns.some(pattern => {
-            try {
-                return new RegExp(pattern).test(dirName);
-            } catch (e) {
-                console.warn(`Invalid regex pattern: ${pattern}, falling back to exact match`);
-                return dirName.toLowerCase() === pattern.toLowerCase();
-            }
-        });
-    }
 
     /**
      * Updates require statements in a single file.
@@ -314,7 +305,7 @@ function handleAbsolutePathUpdates(newFilePath, oldFilePath, workspaceRoot) {
     let newAbsolutePath = null;
     
     for (const [alias, aliasPath] of Object.entries(manualAliases)) {
-        if (alias.startsWith('@')) {
+        if (alias.startsWith(requirePrefix)) {
             // Check if old path starts with this alias path
             if (oldRelative.startsWith(aliasPath.replace(/\\/g, '/'))) {
                 const relativePart = oldRelative.substring(aliasPath.replace(/\\/g, '/').length);
@@ -325,7 +316,7 @@ function handleAbsolutePathUpdates(newFilePath, oldFilePath, workspaceRoot) {
     }
     
     for (const [alias, aliasPath] of Object.entries(manualAliases)) {
-        if (alias.startsWith('@')) {
+        if (alias.startsWith(requirePrefix)) {
             // Check if new path starts with this alias path
             if (newRelative.startsWith(aliasPath.replace(/\\/g, '/'))) {
                 const relativePart = newRelative.substring(aliasPath.replace(/\\/g, '/').length);
@@ -358,28 +349,9 @@ function handleAbsolutePathUpdates(newFilePath, oldFilePath, workspaceRoot) {
  */
 function updateAbsoluteRequireInFiles(oldAbsolutePath, newAbsolutePath, workspaceRoot) {
     const config = vscode.workspace.getConfiguration('require-on-rails');
-    const supportedExtensions = config.get('supportedExtensions') || ['.lua', '.luau']; // Add fallback
     const directoriesToScan = config.get('directoriesToScan');
     const ignoreDirectories = config.get('ignoreDirectories');
     
-    /**
-     * Helper function to check if directory should be ignored based on regex patterns.
-     * 
-     * @param {string} dirName - Directory name to check
-     * @param {string[]} ignorePatterns - Array of regex patterns or strings to match against
-     * @returns {boolean} True if directory should be ignored
-     */
-    function shouldIgnoreDirectory(dirName, ignorePatterns) {
-        return ignorePatterns.some(pattern => {
-            try {
-                return new RegExp(pattern).test(dirName);
-            } catch (e) {
-                console.warn(`Invalid regex pattern: ${pattern}, falling back to exact match`);
-                return dirName.toLowerCase() === pattern.toLowerCase();
-            }
-        });
-    }
-
     /**
      * Updates absolute require statements in a single file.
      * 

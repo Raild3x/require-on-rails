@@ -166,8 +166,14 @@ function debouncedGenerateFileAliases() {
 
 function activate(context) {
     const config = vscode.workspace.getConfiguration('require-on-rails');
-    const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
-	console.log('Activating RequireOnRails extension with workspace root:', workspaceRoot);
+    
+    // Check if workspace folders exist before accessing
+    if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
+        console.log('No workspace folder found. RequireOnRails will be available when a folder is opened.');
+    } else {
+        const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
+        console.log('Activating RequireOnRails extension with workspace root:', workspaceRoot);
+    }
 
     // Status bar button
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
@@ -178,13 +184,17 @@ function activate(context) {
 
     // Register toggle command
     const toggleCommand = vscode.commands.registerCommand('require-on-rails.toggleActive', () => {
+        if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
+            vscode.window.showWarningMessage('RequireOnRails: Please open a folder first.');
+            return;
+        }
         toggleExtension();
     });
     context.subscriptions.push(toggleCommand);
 
     // Register setup default project command
     const setupProjectCommand = vscode.commands.registerCommand('require-on-rails.setupDefaultProject', () => {
-        unpackProjectTemplate();
+        unpackProjectTemplate(context);
     });
     context.subscriptions.push(setupProjectCommand);
 
@@ -195,7 +205,7 @@ function activate(context) {
         }
     });
 
-    if (config.get("startsImmediately")) {
+    if (config.get("startsImmediately") && vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
         console.log('RequireOnRails is starting immediately as per configuration.');
         toggleExtension();
     }

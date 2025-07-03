@@ -1,0 +1,10 @@
+std = "roblox"
+exclude = ["DevPackages", "ServerPackages", "Packages"]
+
+[rules]
+parenthese_conditions = "allow"
+
+[config]
+empty_if = { comments_count = true }
+empty_loop = { comments_count = true }
+one_line_if = "allow"

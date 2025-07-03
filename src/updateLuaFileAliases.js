@@ -3,6 +3,7 @@ const path = require('path');
 const vscode = require('vscode');
 
 const extenionName = 'require-on-rails';
+const supportedExtensions = ['.lua', '.luau'];
 
 // Helper function to get the absolute path of a directory or file
 function getDirPath(workspaceRoot, filePath) {
@@ -182,11 +183,17 @@ function scanDir(dir, rootDir, supportedExtensions, ignorePatterns, ignoreList, 
 // Main function to generate file aliases
 function generateFileAliases() {
     const config = vscode.workspace.getConfiguration(extenionName);
+    
+    // Check if workspace folders exist
+    if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
+        console.log('No workspace folder found. Skipping alias generation.');
+        return;
+    }
+    
     const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
 
     const directoriesToScan = config.get('directoriesToScan') || [];
     const ignoreDirectories = config.get('ignoreDirectories') || [];
-    const supportedExtensions = config.get('supportedExtensions', ['.lua', '.luau']);
     const ignoreList = ['.server', '.client'];
     const rootDirs = directoriesToScan
         .map(dir => getDirPath(workspaceRoot, dir))

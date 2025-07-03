@@ -2,6 +2,9 @@
 
 An opinionated Roblox Luau utility extension that simplifies working with complex codebase hierarchies by automatically generating file aliases and managing import statements. It works in conjunction with a custom requirer in order to parse the string paths.
 
+RequireOnRails does *not* prevent you from utilizing any default require behaviors. If the Luau module detects a non aliased path it will fall back
+to the default Roblox require behavior.
+
 ## Features
 
 ### Automatic File Alias Generation
@@ -35,6 +38,8 @@ The extension automatically hides or reduces the opacity of boilerplate import l
 ### Status Bar Integration
 Toggle the extension on/off with a convenient status bar button showing the current state.
 
+![Status Button Image](images/ReadMe/StatusButtonImage.png)
+
 ## Requirements
 - Visual Studio Code
 - Luau LSP VSCode extension (or some other form of Roblox Luau language support)
@@ -46,18 +51,108 @@ For the default configuration settings, RequireOnRails expects the following pro
 
 ```
 your-project/
+├── .vscode/
+│   └── settings.json
+├── Packages              # Wally Packages
+│   └── RequireOnRails.lua
 ├── src/
-│   ├── _Import/
-│   │   ├── init.luau
-│   │   └── RequireOnRails.luau
+│   ├── Import.luau       # Import module tailored to your project
 │   ├── Server/           # Server-side code (@Server alias)
 │   ├── Client/           # Client-side code (@Client alias)
 │   └── Shared/           # Shared code (@Shared alias)
 ├── .luaurc               # Generated/maintained by extension
-└── .requireonrails.json  # Extension configuration
+├── .requireonrails.json  # Extension configuration
+├── default.project.json
+└── wally.toml
+```
+![ProjectTemplateScreenshot](images/ReadMe/ProjectTemplateScreenshot.png)
+
+## Quick Start
+
+### Option 1: Use Template
+1. Open a fresh workspace in VS Code
+2. Open Command Palette (`Ctrl+Shift+P`)
+3. Run "RequireOnRails: Setup Default Project Structure"
+4. Activate RequireOnRails using the status bar button
+5. Start coding with `require("@ModuleName")` syntax!
+
+### Option 2: Manual Setup
+1. Create your project structure manually
+2. Configure `directoriesToScan` and `importModulePaths` in VS Code settings to match your project
+3. Get the RequireOnRails Luau module and set up your import system
+4. Activate RequireOnRails using the status bar button
+
+## Setup Guide
+
+### 1. Configuration
+Adjust these key settings to match your project structure in your VS Code settings (`.vscode/settings.json`):
+
+Example:
+```json
+{
+    /* These are the directories that RoR will scan through to make aliases. You
+    ** can add a path to your wally packages here to make them visible aswell. It is
+    ** *HIGHLY* reccomended to make manual aliases in the .requireonrails.json for
+    ** any top level directories you implement here.
+    */
+    "require-on-rails.directoriesToScan": [
+        "src/Server",
+        "src/Client", 
+        "src/Shared"
+    ],
+
+    /* This is the path to the importer you generate via the RequireOnRails 
+    ** luau module. This path should be in Roblox hierarchy terms.
+    */
+    "require-on-rails.importModulePaths": [
+        "ReplicatedStorage.src._Import", // Default expected path
+        "game:GetService(\"ReplicatedStorage\").src._Import" // Potential alternate path
+    ]
+}
 ```
 
-## Extension Settings
+### 2. Project Structure
+Ensure your project follows a structure where:
+- Files have unique basenames across all scanned directories
+- Directory structure matches your `directoriesToScan` configuration
+- Import system is properly configured
+
+### 2. Import System Setup
+1. Get the RequireOnRails Luau module (link coming soon)
+2. Create an ImportGenerator by following the instructions in the module.
+3. Ensure your `importModulePaths` configuration points to your newly setup Import module
+4. Add the require override line to your files:
+   ```lua
+   -- This line may vary depending on your `importModulePaths` configuration
+   require = require(ReplicatedStorage.src.Import)(script) :: typeof(require)
+   ```
+
+
+
+## Usage
+
+1. **File Organization**: Organize your Luau files in the directories specified in `directoriesToScan`. Ensure your `_Import` file is setup.
+
+2. **Activation**: Click the status bar button to toggle RequireOnRails on/off
+
+3. **Automatic Aliases**: The extension will automatically generate aliases in your `.luaurc` file based on file basenames
+
+4. **Import Management**: The extension can automatically prompt to add missing import require definitions when it detects `@` require statements
+
+5. **File Operations**: When you rename or move files, the extension will detect the operation and prompt to update require statements accordingly
+
+## Important Notes
+
+⚠️ **Unique Basenames Required**: All files in scanned directories must have unique basenames. If you have `PlayerService.luau` in both Server and Client directories, no alias will be generated to avoid ambiguity.
+
+⚠️ **Configuration Required**: You must configure `directoriesToScan` and `importModulePaths` to match your specific project structure.
+
+⚠️ **RequireOnRails Module**: This extension requires a separate Luau module to function. The module will be available separately.
+
+
+## Extension Settings and Commands
+<details>
+<summary> Show Settings & Commands </summary>
 
 This extension contributes the following settings through `require-on-rails.*`:
 
@@ -140,76 +235,7 @@ RequireOnRails provides the following commands accessible via Command Palette (`
 
 * **Toggle RoR Active**: Enable or disable RequireOnRails functionality
 * **Setup Default Project Structure**: Create a template project structure optimized for RequireOnRails
-
-## Quick Start
-
-### Option 1: Use Template
-1. Open a fresh workspace in VS Code
-2. Open Command Palette (`Ctrl+Shift+P`)
-3. Run "RequireOnRails: Setup Default Project Structure"
-4. Activate RequireOnRails using the status bar button
-5. Start coding with `require("@ModuleName")` syntax!
-
-### Option 2: Manual Setup
-1. Create your project structure manually
-2. Configure `directoriesToScan` and `importModulePaths` in VS Code settings to match your project
-3. Get the RequireOnRails Luau module and set up your import system
-4. Activate RequireOnRails using the status bar button
-
-## Setup Guide
-
-### 1. Project Structure
-Ensure your project follows a structure where:
-- Files have unique basenames across all scanned directories
-- Directory structure matches your `directoriesToScan` configuration
-- Import system is properly configured
-
-### 2. Import System Setup
-1. Get the RequireOnRails Luau module (link coming soon)
-2. Place it in your import directory (e.g., `src/_Import/`)
-3. Update `importModulePaths` configuration to point to your import module
-4. Add the require override line to your files:
-   ```lua
-   -- This line may vary depending on your `importModulePaths` configuration
-   require = require(ReplicatedStorage.src._Import)(script) :: typeof(require)
-   ```
-
-### 3. Configuration
-Adjust these key settings to match your project structure in your VS Code settings (`.vscode/settings.json`):
-
-Example:
-```json
-{
-    "require-on-rails.directoriesToScan": [
-        "src/Server",
-        "src/Client", 
-        "src/Shared"
-    ],
-    "require-on-rails.importModulePaths": [
-        "ReplicatedStorage.src._Import"
-    ]
-}
-```
-
-## Usage
-
-1. **File Organization**: Organize your Luau files in the directories specified in `directoriesToScan`. Ensure your `_Import` file is setup.
-
-2. **Activation**: Click the status bar button to toggle RequireOnRails on/off
-
-3. **Automatic Aliases**: The extension will automatically generate aliases in your `.luaurc` file based on file basenames
-
-4. **Import Management**: The extension can automatically prompt to add missing import require definitions when it detects `@` require statements
-
-5. **File Operations**: When you rename or move files, the extension will detect the operation and prompt to update require statements accordingly
-
-## Important Notes
-
-⚠️ **Unique Basenames Required**: All files in scanned directories must have unique basenames. If you have `PlayerService.luau` in both Server and Client directories, no alias will be generated to avoid ambiguity.
-
-⚠️ **Configuration Required**: You must configure `directoriesToScan` and `importModulePaths` to match your specific project structure.
-
-⚠️ **RequireOnRails Module**: This extension requires a separate Luau module to function. The module will be available separately.
+</details>
 
 ## Troubleshooting
 

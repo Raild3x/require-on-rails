@@ -20,7 +20,7 @@ end
 ------------------------------
 
 if RunService:IsClient() then
-	ImportGenerator = RequireOnRails({
+	ImportGenerator = RequireOnRails.create({
 		Ancestors = {
 			["Client"] = ReplicatedStorage.src.Client,
 			["Shared"] = ReplicatedStorage.src.Shared,
@@ -30,7 +30,7 @@ if RunService:IsClient() then
 	})
 else
 	local ServerScriptService = game:GetService("ServerScriptService")
-	ImportGenerator = RequireOnRails({
+	ImportGenerator = RequireOnRails.create({
 		Ancestors = {
 			["Server"] = ServerScriptService.src.Server,
 			["Shared"] = ReplicatedStorage.src.Shared,
