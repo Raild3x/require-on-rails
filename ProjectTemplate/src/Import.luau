@@ -5,14 +5,14 @@
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local RequireOnRails = require(script.RequireOnRails)
-local ImportGenerator: RequireOnRails.ContextualImportGenerator
+local RequireOnRails = require(ReplicatedStorage.src.Packages.RequireOnRails) :: any
+local ImportGenerator--: RequireOnRails.ContextualImportGenerator
 
 ------------------------------
 
 -- Defines whether or not an instance should be ignored by the import generator.
 local ignorePredicate = function(instance: Instance): (boolean)
-	local isDescendantOfPackageIndexFolder = instance:IsDescendantOf(ReplicatedStorage.src.Packages._index)
+	local isDescendantOfPackageIndexFolder = instance:IsDescendantOf(ReplicatedStorage.src.Packages._Index)
 	local shouldIgnoreFile = isDescendantOfPackageIndexFolder
 	return shouldIgnoreFile
 end

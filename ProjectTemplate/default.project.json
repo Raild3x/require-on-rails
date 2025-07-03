@@ -5,7 +5,7 @@
         "**/start.server.luau",
         "**/start.client.luau",
         "**/_ReplicatedFirst",
-        "**/_Import"
+        "**/Import"
     ],
     "tree": {
         "$className": "DataModel",
@@ -28,9 +28,9 @@
                     "$className": "Folder",
                     "$path": "src/Shared"
                 },
-                "_Import": {
+                "Import": {
                     "$className": "ModuleScript",
-                    "$path": "src/_Import.luau"
+                    "$path": "src/Import.luau"
                 }
             }
         },

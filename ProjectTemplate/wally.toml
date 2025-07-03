@@ -8,5 +8,6 @@ realm = "shared"
 shared-packages = "game.ReplicatedStorage.src.Packages"
 
 [dependencies]
+RequireOnRails = "raild3x/requireonrails@0.0.1"
 
 [server-dependencies]
