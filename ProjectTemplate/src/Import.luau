@@ -5,8 +5,8 @@
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local RequireOnRails = require(ReplicatedStorage.src.Packages.RequireOnRails) :: any
-local ImportGenerator--: RequireOnRails.ContextualImportGenerator
+local RequireOnRails = require(ReplicatedStorage.src.Packages.RequireOnRails)
+local ImportGenerator: RequireOnRails.ContextualImportGenerator
 
 ------------------------------
 
