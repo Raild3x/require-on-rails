@@ -1,127 +1,170 @@
-const fs = require('fs');
+const vscode = require('vscode');
 const path = require('path');
+const fs = require('fs');
 
-/**
- * Creates a temporary test workspace with specified structure
- * @param {string} basePath - Base path for the test workspace
- * @param {Object} structure - Object describing the directory/file structure
- */
-function createTestWorkspace(basePath, structure) {
-    function createItem(itemPath, content) {
-        const fullPath = path.join(basePath, itemPath);
+// Global helper functions shared across test files
+function createMockConfig(overrides = {}) {
+    const defaults = {
+        directoriesToScan: ['src/Server', 'src/Client', 'src/Shared', 'Packages'],
+        ignoreDirectories: ['^_.*'],
+        supportedExtensions: ['.lua', '.luau'],
+        enableAbsolutePathUpdates: true,
+        enableCollisionDetection: true,
+        enableBasenameUpdates: true,
+        requirePrefix: '@',
+        importModulePaths: ['ReplicatedStorage.src._Import'],
+        tryToAddImportRequire: true,
+        importOpacity: 0.45,
+        preferImportPlacement: 'BeforeFirstRequire'
+    };
+    
+    const config = { ...defaults, ...overrides };
+    
+    return {
+        get: (key) => config[key],
+        has: () => true,
+        inspect: () => undefined,
+        update: () => Promise.resolve()
+    };
+}
+
+function mockWorkspaceConfig(testWorkspaceUri, configOverrides = {}) {
+    const originalConfig = vscode.workspace.getConfiguration;
+    const originalWorkspaceFolders = vscode.workspace.workspaceFolders;
+    
+    vscode.workspace.getConfiguration = () => createMockConfig(configOverrides);
+    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
+        value: [{ uri: testWorkspaceUri }],
+        writable: true,
+        configurable: true
+    });
+    
+    return () => {
+        vscode.workspace.getConfiguration = originalConfig;
+        Object.defineProperty(vscode.workspace, 'workspaceFolders', {
+            value: originalWorkspaceFolders,
+            writable: true,
+            configurable: true
+        });
+    };
+}
+
+function createMockEditor(languageId = 'luau', content = '') {
+    return {
+        document: {
+            languageId,
+            getText: () => content
+        },
+        setDecorations: () => {}
+    };
+}
+
+function mockVSCodeMessages(handlers = {}) {
+    const originals = {
+        showInformationMessage: vscode.window.showInformationMessage,
+        showWarningMessage: vscode.window.showWarningMessage,
+        showErrorMessage: vscode.window.showErrorMessage
+    };
+    
+    const captured = {
+        info: [],
+        warning: [],
+        error: []
+    };
+    
+    vscode.window.showInformationMessage = (message, ...options) => {
+        captured.info.push(message);
+        return handlers.info ? handlers.info(message, ...options) : Promise.resolve();
+    };
+    
+    vscode.window.showWarningMessage = (message, ...options) => {
+        captured.warning.push(message);
+        return handlers.warning ? handlers.warning(message, ...options) : Promise.resolve('No');
+    };
+    
+    vscode.window.showErrorMessage = (message, ...options) => {
+        captured.error.push(message);
+        return handlers.error ? handlers.error(message, ...options) : Promise.resolve();
+    };
+    
+    return {
+        captured,
+        restore: () => {
+            vscode.window.showInformationMessage = originals.showInformationMessage;
+            vscode.window.showWarningMessage = originals.showWarningMessage;
+            vscode.window.showErrorMessage = originals.showErrorMessage;
+        }
+    };
+}
+
+function createTestFiles(testWorkspacePath, files) {
+    for (const [filePath, content] of Object.entries(files)) {
+        const fullPath = path.join(testWorkspacePath, filePath);
         const dir = path.dirname(fullPath);
-        
-        // Ensure directory exists
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
         }
-        
-        if (typeof content === 'string') {
-            // It's a file
-            fs.writeFileSync(fullPath, content, 'utf8');
-        } else if (content === null) {
-            // It's a directory
-            if (!fs.existsSync(fullPath)) {
-                fs.mkdirSync(fullPath, { recursive: true });
+        fs.writeFileSync(fullPath, content, 'utf8');
+    }
+}
+
+function cleanupTestFiles(testWorkspacePath, filePaths) {
+    for (const filePath of filePaths) {
+        const fullPath = path.join(testWorkspacePath, filePath);
+        if (fs.existsSync(fullPath)) {
+            if (fs.statSync(fullPath).isDirectory()) {
+                fs.rmSync(fullPath, { recursive: true, force: true });
+            } else {
+                fs.unlinkSync(fullPath);
             }
         }
     }
-    
-    for (const [itemPath, content] of Object.entries(structure)) {
-        createItem(itemPath, content);
-    }
 }
 
-/**
- * Cleans up a test workspace
- * @param {string} basePath - Path to clean up
- */
-function cleanupTestWorkspace(basePath) {
-    if (fs.existsSync(basePath)) {
-        fs.rmSync(basePath, { recursive: true, force: true });
-    }
-}
+async function setupTestWorkspace(testWorkspacePath) {
+    const dirs = [
+        'src/Server', 'src/Client', 'src/Shared',
+        'src/Server/Systems', 'src/Shared/Utils',
+        'Packages', '_Private'
+    ];
 
-/**
- * Mock VSCode configuration for testing
- * @param {Object} configValues - Configuration values to return
- * @returns {Function} Mock configuration function
- */
-function mockVSCodeConfiguration(configValues) {
-    return (section) => ({
-        get: (key, defaultValue) => {
-            const fullKey = section ? `${section}.${key}` : key;
-            return configValues.hasOwnProperty(key) ? configValues[key] : defaultValue;
-        },
-        has: (key) => configValues.hasOwnProperty(key),
-        inspect: (key) => ({
-            key: key,
-            defaultValue: undefined,
-            globalValue: configValues[key],
-            workspaceValue: undefined,
-            workspaceFolderValue: undefined
-        }),
-        update: (key, value, target) => Promise.resolve()
+    // Create directories
+    for (const dir of dirs) {
+        const fullPath = path.join(testWorkspacePath, dir);
+        if (!fs.existsSync(fullPath)) {
+            fs.mkdirSync(fullPath, { recursive: true });
+        }
+    }
+
+    // Create test files
+    createTestFiles(testWorkspacePath, {
+        'src/Server/ServerMain.luau': 'print("Server main")',
+        'src/Server/Systems/PlayerManager.luau': 'local PlayerManager = {}\nreturn PlayerManager',
+        'src/Client/ClientMain.luau': 'print("Client main")',
+        'src/Shared/Config.luau': 'local Config = {}\nreturn Config',
+        'src/Shared/Utils/StringUtils.luau': 'local StringUtils = {}\nreturn StringUtils',
+        'src/Shared/Utils/init.luau': 'return { StringUtils = require("StringUtils") }',
+        'Packages/TestPackage.luau': 'return {}',
+        '_Private/PrivateFile.luau': 'return {}'
     });
-}
 
-/**
- * Creates a mock VSCode workspace
- * @param {string} workspacePath - Path to the workspace
- * @returns {Array} Mock workspace folders array
- */
-function createMockWorkspace(workspacePath) {
-    return [{
-        uri: {
-            fsPath: workspacePath,
-            scheme: 'file'
-        },
-        name: path.basename(workspacePath),
-        index: 0
-    }];
-}
+    // Create configuration files
+    const luaurcConfig = { aliases: {}, languageMode: "strict" };
+    fs.writeFileSync(path.join(testWorkspacePath, '.luaurc'), JSON.stringify(luaurcConfig, null, 4));
 
-/**
- * Waits for a specified amount of time
- * @param {number} ms - Milliseconds to wait
- * @returns {Promise} Promise that resolves after the specified time
- */
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-/**
- * Captures console output during test execution
- * @param {Function} testFunction - Function to execute while capturing output
- * @returns {Promise<any>} Object with captured stdout and stderr, and test result
- */
-async function captureConsoleOutput(testFunction) {
-    const originalLog = console.log;
-    const originalWarn = console.warn;
-    const originalError = console.error;
-    
-    const stdout = [];
-    const stderr = [];
-    
-    console.log = (...args) => stdout.push(args.join(' '));
-    console.warn = (...args) => stderr.push(args.join(' '));
-    console.error = (...args) => stderr.push(args.join(' '));
-    
-    try {
-        const result = await testFunction();
-        return { stdout, stderr, result };
-    } finally {
-        console.log = originalLog;
-        console.warn = originalWarn;
-        console.error = originalError;
-    }
+    const requireOnRailsConfig = {
+        manualAliases: { "@Server": "src/Server", "@Client": "src/Client", "@Shared": "src/Shared" },
+        autoGeneratedAliases: {}
+    };
+    fs.writeFileSync(path.join(testWorkspacePath, '.requireonrails.json'), JSON.stringify(requireOnRailsConfig, null, 4));
 }
 
 module.exports = {
-    createTestWorkspace,
-    cleanupTestWorkspace,
-    mockVSCodeConfiguration,
-    createMockWorkspace,
-    sleep,
-    captureConsoleOutput
+    createMockConfig,
+    mockWorkspaceConfig,
+    createMockEditor,
+    mockVSCodeMessages,
+    createTestFiles,
+    cleanupTestFiles,
+    setupTestWorkspace
 };

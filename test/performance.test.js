@@ -1,18 +1,35 @@
 const assert = require('assert');
+const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
 const { generateFileAliases } = require('../src/updateLuaFileAliases');
-const { createTestWorkspace, cleanupTestWorkspace, mockVSCodeConfiguration, createMockWorkspace } = require('./testUtils');
+
+// Import shared test utilities
+const {
+    createMockConfig,
+    mockWorkspaceConfig,
+    createTestFiles,
+    cleanupTestFiles
+} = require('./testUtils');
 
 suite('Performance Tests', () => {
     let testWorkspacePath;
+    let testWorkspaceUri;
 
     suiteSetup(() => {
         testWorkspacePath = path.join(__dirname, 'perf-test-workspace');
+        testWorkspaceUri = vscode.Uri.file(testWorkspacePath);
+        
+        // Ensure test workspace exists
+        if (!fs.existsSync(testWorkspacePath)) {
+            fs.mkdirSync(testWorkspacePath, { recursive: true });
+        }
     });
 
     suiteTeardown(() => {
-        cleanupTestWorkspace(testWorkspacePath);
+        if (fs.existsSync(testWorkspacePath)) {
+            fs.rmSync(testWorkspacePath, { recursive: true, force: true });
+        }
     });
 
     test('Should handle large number of files efficiently', async function() {
@@ -36,23 +53,15 @@ suite('Performance Tests', () => {
             largeStructure[`node_modules/Module${i}.js`] = `module.exports = {}`;
         }
         
-        createTestWorkspace(testWorkspacePath, largeStructure);
+        // Create initial .luaurc file
+        largeStructure['.luaurc'] = JSON.stringify({ aliases: {}, languageMode: "strict" }, null, 4);
         
-        // Mock VSCode environment
-        const vscode = require('vscode');
-        const originalConfig = vscode.workspace.getConfiguration;
-        const originalWorkspaceFolders = vscode.workspace.workspaceFolders;
+        createTestFiles(testWorkspacePath, largeStructure);
         
-        vscode.workspace.getConfiguration = mockVSCodeConfiguration({
+        const restore = mockWorkspaceConfig(testWorkspaceUri, {
             directoriesToScan: ['src/Server', 'src/Client', 'src/Shared', 'Packages', 'ServerPackages'],
             ignoreDirectories: ['^_.*', 'node_modules'],
             supportedExtensions: ['.lua', '.luau']
-        });
-        
-        Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-            value: createMockWorkspace(testWorkspacePath),
-            writable: true,
-            configurable: true
         });
         
         try {
@@ -82,12 +91,8 @@ suite('Performance Tests', () => {
             assert.ok(!hasPrivateFiles, 'Should not include files from ignored directories');
             
         } finally {
-            vscode.workspace.getConfiguration = originalConfig;
-            Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-                value: originalWorkspaceFolders,
-                writable: true,
-                configurable: true
-            });
+            restore();
+            cleanupTestFiles(testWorkspacePath, Object.keys(largeStructure));
         }
     });
     
@@ -105,22 +110,15 @@ suite('Performance Tests', () => {
             deepStructure[`${currentPath}/init.luau`] = `return require("Module${depth}")`;
         }
         
-        createTestWorkspace(testWorkspacePath, deepStructure);
+        // Create initial .luaurc file
+        deepStructure['.luaurc'] = JSON.stringify({ aliases: {}, languageMode: "strict" }, null, 4);
         
-        const vscode = require('vscode');
-        const originalConfig = vscode.workspace.getConfiguration;
-        const originalWorkspaceFolders = vscode.workspace.workspaceFolders;
+        createTestFiles(testWorkspacePath, deepStructure);
         
-        vscode.workspace.getConfiguration = mockVSCodeConfiguration({
+        const restore = mockWorkspaceConfig(testWorkspaceUri, {
             directoriesToScan: ['src'],
             ignoreDirectories: [],
             supportedExtensions: ['.lua', '.luau']
-        });
-        
-        Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-            value: createMockWorkspace(testWorkspacePath),
-            writable: true,
-            configurable: true
         });
         
         try {
@@ -135,12 +133,8 @@ suite('Performance Tests', () => {
             assert.ok(executionTime < 2000, `Deep structure test failed: took ${executionTime}ms`);
             
         } finally {
-            vscode.workspace.getConfiguration = originalConfig;
-            Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-                value: originalWorkspaceFolders,
-                writable: true,
-                configurable: true
-            });
+            restore();
+            cleanupTestFiles(testWorkspacePath, Object.keys(deepStructure));
         }
     });
 });
