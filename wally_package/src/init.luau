@@ -1,6 +1,5 @@
 --!strict
--- Author: Logan Hunt (Raildex)
--- Date: April 16, 2025
+-- Author: Logan Hunt (Roblox: Raildex) (GitHub: raild3x)
 --[=[
 	RequireOnRails - Contextual Module Import System
 	
@@ -8,12 +7,13 @@
 	using string paths relative to configured ancestor instances. It supports both
 	absolute paths (starting with @) and relative module resolution.
 
-	This module is intended to be used in conjunction with the RequireOnRails VSCode extension,
-	which provides automatic alias generation for LuauLSP linting.
-
 	If you don't prefix your passed path with '@', it will fall back to the default 
 	`require` behavior, allowing you to import modules using their full paths as 
 	strings or directly using Instance references.
+
+	This module is intended to be used in conjunction with the 
+	[RequireOnRails](https://github.com/Raild3x/require-on-rails) VSCode extension,
+	which provides automatic alias generation for LuauLSP linting.
 	
 	Key Features:
 	- Contextual imports based on the calling module's location
@@ -28,9 +28,9 @@
 	
 	Usage Examples:
 	
+	ReplicatedStorage/Import.luau
 	```lua
-	-- ReplicatedStorage/Import.luau
-	local RequireOnRails = require(ReplicatedStorage.src.Packages.RequireOnRails)
+	local RequireOnRails = require(path.to.RequireOnRails)
 
 	-- Setup the import generator
 	local GenerateImport = RequireOnRails.create({

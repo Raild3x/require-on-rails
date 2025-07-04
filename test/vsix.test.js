@@ -285,6 +285,7 @@ suite('VSIX Extension Integration Tests', () => {
                 activate(mockVSIXContext);
                 
                 assert.ok(statusBarItem, 'Should create status bar item in VSIX environment');
+                // @ts-ignore
                 assert.ok(statusBarItem.text.includes('RequireOnRails'), 'Status bar should show extension name');
 
             } finally {
