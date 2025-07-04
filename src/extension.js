@@ -4,6 +4,7 @@ const { generateFileAliases } = require('./updateLuaFileAliases');
 const { updateRequireNames } = require('./updateRequireNames');
 const { hideLines, unhideLines } = require('./hideLines');
 const { unpackProjectTemplate } = require('./unpackProjectTemplate');
+const { downloadLuauModule } = require('./downloadLuauModule');
 
 let isActive = false;
 let statusBarItem;
@@ -145,6 +146,13 @@ function toggleExtension() {
     }
 }
 
+// Helper function to register commands
+function registerCommand(context, commandId, handler) {
+    const command = vscode.commands.registerCommand(commandId, handler);
+    context.subscriptions.push(command);
+    return command;
+}
+
 // Debounce utility (shared instance for all watchers)
 let debounceTimer = null;
 let debouncePending = false;
@@ -182,21 +190,22 @@ function activate(context) {
     statusBarItem.show();
     context.subscriptions.push(statusBarItem);
 
-    // Register toggle command
-    const toggleCommand = vscode.commands.registerCommand('require-on-rails.toggleActive', () => {
+    // Register commands using helper function
+    registerCommand(context, 'require-on-rails.toggleActive', () => {
         if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
             vscode.window.showWarningMessage('RequireOnRails: Please open a folder first.');
             return;
         }
         toggleExtension();
     });
-    context.subscriptions.push(toggleCommand);
 
-    // Register setup default project command
-    const setupProjectCommand = vscode.commands.registerCommand('require-on-rails.setupDefaultProject', () => {
+    registerCommand(context, 'require-on-rails.setupDefaultProject', () => {
         unpackProjectTemplate(context);
     });
-    context.subscriptions.push(setupProjectCommand);
+
+    registerCommand(context, 'require-on-rails.downloadLuauModule', () => {
+        downloadLuauModule(context);
+    });
 
     // Clean up on deactivate
     context.subscriptions.push({

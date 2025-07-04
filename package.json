@@ -20,6 +20,7 @@
     "src/**/*",
     "ProjectTemplate",
     "images/icon_v2.png",
+    "images/ReadMe/*",
     "README.md",
     "CHANGELOG.md",
     "package.json"
@@ -33,6 +34,10 @@
       {
         "command": "require-on-rails.setupDefaultProject",
         "title": "Setup Default Project Structure"
+      },
+      {
+        "command": "require-on-rails.downloadLuauModule",
+        "title": "Download Luau Module"
       }
     ],
     "configuration": {
@@ -68,7 +73,7 @@
         "require-on-rails.importOpacity": {
           "type": "number",
           "default": 0.45,
-          "description": "The opacity of the require override in the editor. Ex: `require = require('@Import')`"
+          "description": "The opacity of the require override in the editor."
         },
         "require-on-rails.importModulePaths": {
           "type": "array",
