@@ -29,6 +29,10 @@
       {
         "command": "require-on-rails.downloadLuauModule",
         "title": "Download Luau Module"
+      },
+      {
+        "command": "require-on-rails.regenerateAliases",
+        "title": "Regenerate Aliases (Debug)"
       }
     ],
     "configuration": {
@@ -80,7 +84,7 @@
             "type": "string"
           }
         },
-        "preferredImportPlacement": {
+        "require-on-rails.preferredImportPlacement": {
           "type": "string",
           "default": "TopOfFile",
           "enum": ["TopOfFile", "BeforeFirstRequire", "AfterDefiningRobloxServices"],
@@ -111,6 +115,18 @@
           ],
           "description": "Regex patterns for directories/files to ignore when scanning for Luau files to generate aliases. By default uses '^_.*' to ignore anything prefixed with an underscore.",
           "items": {
+            "type": "string"
+          }
+        },
+        "require-on-rails.manualAliases": {
+          "type": "object",
+          "default": {
+            "Server": "src/Server",
+            "Client": "src/Client",
+            "Shared": "src/Shared"
+          },
+          "description": "Manual aliases for absolute path support. Maps alias names to their corresponding directory paths (relative to workspace root).",
+          "additionalProperties": {
             "type": "string"
           }
         }

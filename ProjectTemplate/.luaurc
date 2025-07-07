@@ -3,7 +3,8 @@
     },
     "languageMode": "nonstrict",
     "lint": {
-        "*": true
+        "*": true,
+        "BuiltinGlobalWrite": false
     },
     "typeErrors": true
 }

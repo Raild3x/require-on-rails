@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const vscode = require('vscode');
+const { print, warn, error } = require('./logger');
 
 /**
  * Unpacks the project template into the workspace directory.
@@ -18,9 +19,9 @@ function unpackProjectTemplate(context) {
     const extensionPath = context.extensionUri.fsPath;
     const templatePath = path.join(extensionPath, 'ProjectTemplate');
 
-    console.log('Extension path:', extensionPath);
-    console.log('Template path:', templatePath);
-    console.log('Template exists:', fs.existsSync(templatePath));
+    print('Extension path:', extensionPath);
+    print('Template path:', templatePath);
+    print('Template exists:', fs.existsSync(templatePath));
     
     if (!fs.existsSync(templatePath)) {
         vscode.window.showErrorMessage(`Project template not found at: ${templatePath}`);
@@ -80,53 +81,99 @@ function copyTemplateContents(templatePath, workspaceRoot) {
                     // Always merge directories - create if doesn't exist, merge if it does
                     if (!fs.existsSync(destPath)) {
                         fs.mkdirSync(destPath, { recursive: true });
-                        console.log(`Created directory: ${itemRelativePath}`);
+                        print(`Created directory: ${itemRelativePath}`);
                     } else {
-                        console.log(`Merging with existing directory: ${itemRelativePath}`);
+                        print(`Merging with existing directory: ${itemRelativePath}`);
                         mergedDirs++;
                     }
                     // Recursively copy directory contents
                     await copyRecursive(srcPath, destPath, itemRelativePath);
                 } else if (stats.isFile()) {
+                    // Special handling for .gitkeep files
+                    if (item === '.gitkeep') {
+                        // Check if the destination directory already has other files
+                        const destDirContents = fs.readdirSync(destDir);
+                        const nonGitkeepFiles = destDirContents.filter(file => file !== '.gitkeep');
+                        
+                        if (nonGitkeepFiles.length > 0) {
+                            print(`[DEBUG] Skipping .gitkeep for ${itemRelativePath} - directory already has files: ${nonGitkeepFiles.join(', ')}`);
+                            skippedItems++;
+                            continue; // Skip this .gitkeep file
+                        }
+                        
+                        // Directory is empty (or only has .gitkeep), proceed with normal file handling
+                        print(`[DEBUG] Directory is empty, proceeding with .gitkeep for ${itemRelativePath}`);
+                    }
+                    
                     if (!fs.existsSync(destPath)) {
                         // File doesn't exist, copy it
                         fs.copyFileSync(srcPath, destPath);
-                        console.log(`Copied file: ${itemRelativePath}`);
+                        print(`Copied file: ${itemRelativePath}`);
                         copiedItems++;
                     } else {
                         // File exists, attempt to merge
                         if (isJsonConvertible(srcPath) && isJsonConvertible(destPath)) {
+                            print(`[DEBUG] Attempting JSON merge for: ${itemRelativePath}`);
+                            
                             // Store original content before merging
                             const originalContent = fs.readFileSync(destPath, 'utf8');
                             const mergedContent = await mergeJson(srcPath, destPath, itemRelativePath);
+                            
                             if (mergedContent !== null) {
-                                fs.writeFileSync(destPath, mergedContent, 'utf8');
-                                console.log(`Merged JSON-compatible file: ${itemRelativePath}`);
-                                mergedDirs++;
-                                
-                                // Show notification with diff option
-                                showFileChangeNotification(itemRelativePath, originalContent, mergedContent, 'merged');
+                                // Check if content actually changed
+                                if (originalContent !== mergedContent) {
+                                    fs.writeFileSync(destPath, mergedContent, 'utf8');
+                                    print(`[DEBUG] Successfully merged JSON file: ${itemRelativePath}`);
+                                    print(`[DEBUG] - Original length: ${originalContent.length}`);
+                                    print(`[DEBUG] - Merged length: ${mergedContent.length}`);
+                                    mergedDirs++;
+                                    
+                                    // Show notification with diff option
+                                    showFileChangeNotification(itemRelativePath, originalContent, mergedContent, 'merged');
+                                } else {
+                                    print(`[DEBUG] JSON merge produced identical content for: ${itemRelativePath}`);
+                                }
                             } else {
-                                // JSON merge failed, copy template file
+                                // JSON merge failed, but since both files are JSON, try to merge again with better error handling
+                                print(`[DEBUG] Initial JSON merge failed, attempting fallback merge: ${itemRelativePath}`);
                                 const originalContent = fs.readFileSync(destPath, 'utf8');
                                 const templateContent = fs.readFileSync(srcPath, 'utf8');
-                                fs.copyFileSync(srcPath, destPath);
-                                console.log(`Overwritten file (JSON merge failed): ${itemRelativePath}`);
-                                copiedItems++;
                                 
-                                // Show notification with diff option
-                                showFileChangeNotification(itemRelativePath, originalContent, templateContent, 'overwritten');
+                                // Try to merge as JSON one more time with fallback
+                                const fallbackMerged = await fallbackJsonMerge(templateContent, originalContent, itemRelativePath);
+                                if (fallbackMerged !== null) {
+                                    fs.writeFileSync(destPath, fallbackMerged, 'utf8');
+                                    print(`[DEBUG] Fallback JSON merge succeeded: ${itemRelativePath}`);
+                                    mergedDirs++;
+                                    showFileChangeNotification(itemRelativePath, originalContent, fallbackMerged, 'merged');
+                                } else {
+                                    // Complete merge failure - keep existing file unchanged
+                                    print(`[DEBUG] All JSON merge attempts failed, keeping existing file: ${itemRelativePath}`);
+                                    skippedItems++;
+                                }
                             }
-                        } else {
-                            // Not JSON-compatible, overwrite with template
+                        } else if (isJsonConvertible(srcPath)) {
+                            // Source is JSON but destination is not - convert destination to JSON if possible
+                            print(`[DEBUG] Source (${srcPath}) is JSON, destination (${destPath}) is not, attempting conversion: ${itemRelativePath}`);
                             const originalContent = fs.readFileSync(destPath, 'utf8');
                             const templateContent = fs.readFileSync(srcPath, 'utf8');
-                            fs.copyFileSync(srcPath, destPath);
-                            console.log(`Overwritten file: ${itemRelativePath}`);
-                            copiedItems++;
                             
-                            // Show notification with diff option
-                            showFileChangeNotification(itemRelativePath, originalContent, templateContent, 'overwritten');
+                            // Try to convert destination to JSON and merge
+                            const convertedMerged = await convertAndMergeJson(templateContent, originalContent, itemRelativePath);
+                            if (convertedMerged !== null) {
+                                fs.writeFileSync(destPath, convertedMerged, 'utf8');
+                                print(`[DEBUG] Converted and merged file: ${itemRelativePath}`);
+                                mergedDirs++;
+                                showFileChangeNotification(itemRelativePath, originalContent, convertedMerged, 'merged');
+                            } else {
+                                // Keep existing file unchanged
+                                print(`[DEBUG] Cannot convert destination to JSON, keeping existing: ${itemRelativePath}`);
+                                skippedItems++;
+                            }
+                        } else {
+                            // Neither file is JSON-compatible, keep existing file unchanged
+                            print(`[DEBUG] Neither file is JSON-compatible, keeping existing: ${itemRelativePath}`);
+                            skippedItems++;
                         }
                     }
                 }
@@ -164,7 +211,7 @@ function copyTemplateContents(templatePath, workspaceRoot) {
         })();
 
     } catch (error) {
-        console.error('Error copying project template:', error);
+        error('Error copying project template:', error);
         vscode.window.showErrorMessage(`Failed to copy project template: ${error.message}`);
     }
 }
@@ -198,46 +245,156 @@ async function showFileDiff(templateFilePath, existingFilePath, relativePath, me
         if (mergedContent !== null) {
             // Write the merged content to the existing file
             fs.writeFileSync(existingFilePath, mergedContent, 'utf8');
-            console.log(`Applied merged content for ${relativePath}`);
+            print(`Applied merged content for ${relativePath}`);
         }
         
     } catch (error) {
-        console.error('Error showing diff:', error);
+        error('Error showing diff:', error);
     }
 }
 
 /**
- * Intelligently merges JSON files, preserving existing properties and adding missing template properties
+ * Strips comments from JSON content to handle JSONC files
  * 
- * @param {string} templateFilePath - Path to the template JSON file
- * @param {string} existingFilePath - Path to the existing JSON file
+ * @param {string} content - JSON content that may contain comments
+ * @returns {string} - JSON content with comments removed
+ */
+function stripJsonComments(content) {
+    try {
+        // Remove single-line comments (// comment)
+        // But preserve URLs and other legitimate uses of //
+        let result = content.replace(/\/\/(?![^\r\n]*["'][^"']*\/\/[^"']*["'])[^\r\n]*/g, '');
+        
+        // Remove multi-line comments (/* comment */)
+        // Use non-greedy matching to avoid removing content between separate comment blocks
+        result = result.replace(/\/\*[\s\S]*?\*\//g, '');
+        
+        // Remove trailing commas that might be left after comment removal
+        result = result.replace(/,(\s*[}\]])/g, '$1');
+        
+        return result;
+    } catch (error) {
+        warn('[DEBUG] Error stripping JSON comments:', error);
+        return content; // Return original content if stripping fails
+    }
+}
+
+/**
+ * Attempts to parse JSON content with JSONC support (JSON with comments)
+ * 
+ * @param {string} content - JSON/JSONC content to parse
+ * @param {string} filePath - File path for error reporting
+ * @returns {object|null} - Parsed JSON object or null if parsing failed
+ */
+function parseJsonWithComments(content, filePath) {
+    try {
+        // First try parsing as regular JSON
+        return JSON.parse(content);
+    } catch (error) {
+        print(`[DEBUG] Regular JSON parse failed for ${filePath}, trying JSONC parsing`);
+        
+        try {
+            // Strip comments and try parsing again
+            const strippedContent = stripJsonComments(content);
+            return JSON.parse(strippedContent);
+        } catch (jsoncError) {
+            warn(`[DEBUG] JSONC parse also failed for ${filePath}:`, jsoncError.message);
+            return null;
+        }
+    }
+}
+
+/**
+ * Checks if a file contains JSON/JSONC-convertible content by attempting to parse it
+ * 
+ * @param {string} filePath - Path to the file
+ * @returns {boolean} - True if the file content can be parsed as JSON/JSONC
+ */
+function isJsonConvertible(filePath) {
+    try {
+        if (!fs.existsSync(filePath)) {
+            print(`[DEBUG] File does not exist: ${filePath}`);
+            return false;
+        }
+        
+        const content = fs.readFileSync(filePath, 'utf8').trim();
+        
+        // Empty files are not JSON-convertible
+        if (!content) {
+            print(`[DEBUG] File is empty: ${filePath}`);
+            return false;
+        }
+        
+        // Check file extension for common JSON/JSONC files
+        const ext = path.extname(filePath).toLowerCase();
+        const jsonExtensions = ['.json', '.jsonc'];
+        
+        // If it's a known JSON extension, try parsing with JSONC support
+        if (jsonExtensions.includes(ext)) {
+            const parsed = parseJsonWithComments(content, filePath);
+            const isConvertible = parsed !== null;
+            print(`[DEBUG] File ${filePath} is ${isConvertible ? '' : 'not '}JSON/JSONC-convertible (by extension)`);
+            return isConvertible;
+        }
+        
+        // For other files, try parsing as JSON/JSONC anyway
+        const parsed = parseJsonWithComments(content, filePath);
+        const isConvertible = parsed !== null;
+        print(`[DEBUG] File ${filePath} is ${isConvertible ? '' : 'not '}JSON/JSONC-convertible (by content)`);
+        return isConvertible;
+        
+    } catch (error) {
+        warn(`[DEBUG] Error checking JSON/JSONC convertible for ${filePath}:`, error.message);
+        return false;
+    }
+}
+
+/**
+ * Intelligently merges JSON/JSONC files, preserving existing properties and adding missing template properties
+ * 
+ * @param {string} templateFilePath - Path to the template JSON/JSONC file
+ * @param {string} existingFilePath - Path to the existing JSON/JSONC file
  * @param {string} relativePath - Relative path for display purposes
  * @returns {string|null} - The merged JSON content as string, or null if merge failed
  */
 async function mergeJson(templateFilePath, existingFilePath, relativePath) {
     try {
+        print(`[DEBUG] Starting JSON/JSONC merge for: ${relativePath}`);
+        
         // Read both files
         const templateContent = fs.readFileSync(templateFilePath, 'utf8');
         const existingContent = fs.readFileSync(existingFilePath, 'utf8');
         
+        print(`[DEBUG] Template content length: ${templateContent.length}`);
+        print(`[DEBUG] Existing content length: ${existingContent.length}`);
+        
         let templateJson, existingJson;
         
-        try {
-            templateJson = JSON.parse(templateContent);
-            existingJson = JSON.parse(existingContent);
-        } catch (parseError) {
-            console.warn(`Failed to parse JSON content for ${relativePath}:`, parseError.message);
+        // Parse both files with JSONC support
+        templateJson = parseJsonWithComments(templateContent, templateFilePath);
+        existingJson = parseJsonWithComments(existingContent, existingFilePath);
+        
+        if (templateJson === null || existingJson === null) {
+            print(`[DEBUG] Failed to parse JSON/JSONC content for ${relativePath}`);
             return null;
         }
+        
+        print(`[DEBUG] Template JSON keys: ${Object.keys(templateJson).join(', ')}`);
+        print(`[DEBUG] Existing JSON keys: ${Object.keys(existingJson).join(', ')}`);
         
         // Perform deep merge, preserving existing values and adding missing template fields
         const mergedJson = deepMergeJson(existingJson, templateJson);
         
+        print(`[DEBUG] Merged JSON keys: ${Object.keys(mergedJson).join(', ')}`);
+        
         // Return the merged content as formatted JSON string
-        return JSON.stringify(mergedJson, null, 2);
+        const mergedContent = JSON.stringify(mergedJson, null, 2);
+        print(`[DEBUG] Final merged content length: ${mergedContent.length}`);
+        
+        return mergedContent;
         
     } catch (error) {
-        console.error(`Error merging JSON files for ${relativePath}:`, error);
+        error(`[DEBUG] Error merging JSON/JSONC files for ${relativePath}:`, error);
         return null;
     }
 }
@@ -292,33 +449,6 @@ function deepMergeJson(existing, template) {
     }
     
     return result;
-}
-
-/**
- * Checks if a file contains JSON-convertible content by attempting to parse it
- * 
- * @param {string} filePath - Path to the file
- * @returns {boolean} - True if the file content can be parsed as JSON
- */
-function isJsonConvertible(filePath) {
-    try {
-        if (!fs.existsSync(filePath)) {
-            return false;
-        }
-        
-        const content = fs.readFileSync(filePath, 'utf8').trim();
-        
-        // Empty files are not JSON-convertible
-        if (!content) {
-            return false;
-        }
-        
-        // Try to parse as JSON
-        JSON.parse(content);
-        return true;
-    } catch (error) {
-        return false;
-    }
 }
 
 /**
@@ -388,13 +518,94 @@ async function showContentDiff(relativePath, originalContent, newContent, change
                 if (fs.existsSync(originalTempPath)) fs.unlinkSync(originalTempPath);
                 if (fs.existsSync(newTempPath)) fs.unlinkSync(newTempPath);
             } catch (cleanupError) {
-                console.warn('Failed to clean up temp files:', cleanupError);
+                warn('Failed to clean up temp files:', cleanupError);
             }
         }, 30000); // Clean up after 30 seconds
         
     } catch (error) {
-        console.error('Error showing content diff:', error);
+        error('Error showing content diff:', error);
         vscode.window.showErrorMessage(`Failed to show diff for ${relativePath}: ${error.message}`);
+    }
+}
+
+/**
+ * Fallback JSON/JSONC merge function that attempts to merge with more lenient parsing
+ * 
+ * @param {string} templateContent - Template file content
+ * @param {string} existingContent - Existing file content
+ * @param {string} relativePath - Relative path for display purposes
+ * @returns {string|null} - The merged JSON content as string, or null if merge failed
+ */
+async function fallbackJsonMerge(templateContent, existingContent, relativePath) {
+    try {
+        print(`[DEBUG] Attempting fallback JSON/JSONC merge for: ${relativePath}`);
+        
+        let templateJson, existingJson;
+        
+        // Try parsing with JSONC support and more lenient approach
+        templateJson = parseJsonWithComments(templateContent.trim(), `template-${relativePath}`);
+        existingJson = parseJsonWithComments(existingContent.trim(), `existing-${relativePath}`);
+        
+        if (templateJson === null || existingJson === null) {
+            print(`[DEBUG] Fallback JSON/JSONC parse also failed for ${relativePath}`);
+            return null;
+        }
+        
+        print(`[DEBUG] Fallback parse successful for: ${relativePath}`);
+        
+        // Perform deep merge, preserving existing values and adding missing template fields
+        const mergedJson = deepMergeJson(existingJson, templateJson);
+        
+        print(`[DEBUG] Fallback merge completed for: ${relativePath}`);
+        
+        // Return the merged content as formatted JSON string
+        return JSON.stringify(mergedJson, null, 2);
+        
+    } catch (error) {
+        error(`[DEBUG] Error in fallback JSON/JSONC merge for ${relativePath}:`, error);
+        return null;
+    }
+}
+
+/**
+ * Attempts to convert non-JSON content to JSON and merge with template
+ * 
+ * @param {string} templateContent - Template JSON/JSONC content
+ * @param {string} existingContent - Existing non-JSON content
+ * @param {string} relativePath - Relative path for display purposes
+ * @returns {string|null} - The merged content, or null if conversion failed
+ */
+async function convertAndMergeJson(templateContent, existingContent, relativePath) {
+    try {
+        print(`[DEBUG] Attempting to convert and merge: ${relativePath}`);
+        
+        let templateJson;
+        
+        // Parse template with JSONC support
+        templateJson = parseJsonWithComments(templateContent, `template-${relativePath}`);
+        
+        if (templateJson === null) {
+            print(`[DEBUG] Template is not valid JSON/JSONC for ${relativePath}`);
+            return null;
+        }
+        
+        // Try to create a minimal JSON structure from existing content
+        // This is a simple approach - in practice you might want more sophisticated conversion
+        const existingAsJson = {
+            "_originalContent": existingContent.trim(),
+            "_convertedToJson": true
+        };
+        
+        // Merge template fields into the converted structure
+        const mergedJson = deepMergeJson(existingAsJson, templateJson);
+        
+        print(`[DEBUG] Conversion and merge completed for: ${relativePath}`);
+        
+        return JSON.stringify(mergedJson, null, 2);
+        
+    } catch (error) {
+        error(`[DEBUG] Error converting and merging ${relativePath}:`, error);
+        return null;
     }
 }
 

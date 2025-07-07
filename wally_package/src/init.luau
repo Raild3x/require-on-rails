@@ -40,16 +40,9 @@
 			["Packages"] = ReplicatedStorage.src.Packages,
 		},
 		-- Optional configuration
-		Aliases = {
-			["Utils"] = "Shared/Utilities",
-			["UI"] = "Client/Interface"
-		},
 		Debug = true,
-		MaxSearchDepth = 10,
-		CaseSensitive = false,
-		MicroprofilerEnabled = true,
 		IgnorePredicate = function(instance)
-			return instance.Name:match("^%.") -- Ignore hidden folders
+			return instance.Name:match("^_") -- Ignore files/folders starting with a _
 		end
 	})
 

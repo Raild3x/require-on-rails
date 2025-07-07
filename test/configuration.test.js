@@ -143,19 +143,13 @@ suite('Configuration Tests', () => {
 
     test('Should handle invalid JSON in config files', () => {
         const luaurcPath = path.join(testWorkspacePath, '.luaurc');
-        const extensionConfigPath = path.join(testWorkspacePath, '.requireonrails.json');
         
         let originalLuaurc = '';
-        let originalExtensionConfig = '';
         if (fs.existsSync(luaurcPath)) {
             originalLuaurc = fs.readFileSync(luaurcPath, 'utf8');
         }
-        if (fs.existsSync(extensionConfigPath)) {
-            originalExtensionConfig = fs.readFileSync(extensionConfigPath, 'utf8');
-        }
         
         fs.writeFileSync(luaurcPath, '{ invalid json }');
-        fs.writeFileSync(extensionConfigPath, '{ also invalid }');
 
         const originalConfig = vscode.workspace.getConfiguration;
         vscode.workspace.getConfiguration = () => ({
@@ -167,6 +161,8 @@ suite('Configuration Tests', () => {
                         return [];
                     case 'supportedExtensions':
                         return ['.luau'];
+                    case 'manualAliases':
+                        return { 'Server': 'src/Server' };
                     default:
                         return undefined;
                 }
@@ -201,9 +197,29 @@ suite('Configuration Tests', () => {
             if (originalLuaurc) {
                 fs.writeFileSync(luaurcPath, originalLuaurc);
             }
-            if (originalExtensionConfig) {
-                fs.writeFileSync(extensionConfigPath, originalExtensionConfig);
+        }
+    });
+
+    test('Should handle manualAliases configuration', () => {
+        const restore = mockWorkspaceConfig(testWorkspaceUri, {
+            directoriesToScan: ['src/Server'],
+            manualAliases: {
+                '@CustomServer': 'src/Server',
+                '@AnotherAlias': 'some/other/path'
             }
+        });
+
+        try {
+            generateFileAliases();
+            
+            const luaurcPath = path.join(testWorkspacePath, '.luaurc');
+            const luaurcContent = JSON.parse(fs.readFileSync(luaurcPath, 'utf8'));
+            
+            assert.ok(luaurcContent.aliases['@CustomServer'], 'Should include custom manual aliases');
+            assert.ok(luaurcContent.aliases['@AnotherAlias'], 'Should include multiple manual aliases');
+            assert.strictEqual(luaurcContent.aliases['@CustomServer'], 'src/Server', 'Manual alias should have correct path');
+        } finally {
+            restore();
         }
     });
 });

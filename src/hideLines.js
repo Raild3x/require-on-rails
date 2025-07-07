@@ -1,6 +1,7 @@
 const vscode = require('vscode');
 const path = require('path');
 const fs = require('fs');
+const { print } = require('./logger');
 
 // Store decoration types globally to properly dispose of them
 let currentDecorationType = null;

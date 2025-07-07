@@ -1,8 +1,22 @@
 {
     "luau-lsp.sourcemap.rojoProjectFile": "default.project.json",
 
+    "require-on-rails.startsImmediately": false,
+
+    "require-on-rails.directoriesToScan": [
+        "src/Server",
+        "src/Client",
+        "src/Shared"
+    ],
+
+    "require-on-rails.manualAliases": {
+        "Server": "src/Server",
+        "Client": "src/Client",
+        "Shared": "src/Shared"
+    },
+
     "require-on-rails.importModulePaths": [
-        "ReplicatedStorage.src._Import"
+        "ReplicatedStorage.src.Import"
     ]
 
 }

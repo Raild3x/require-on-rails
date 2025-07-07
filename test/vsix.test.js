@@ -90,7 +90,7 @@ suite('VSIX Extension Integration Tests', () => {
                     // Wait for async operations to complete
                     setTimeout(() => {
                         // Check if any template files were created
-                        const expectedFiles = ['.luaurc', 'src', '.requireonrails.json'];
+                        const expectedFiles = ['.luaurc', 'src'];
                         let filesCreated = 0;
                         
                         for (const file of expectedFiles) {

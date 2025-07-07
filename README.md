@@ -1,6 +1,6 @@
 # RequireOnRails
 
-An opinionated Roblox Luau utility extension that simplifies working with complex codebase hierarchies by automatically generating file aliases and managing import statements. It works in conjunction with a custom requirer in order to parse the string paths.
+An opinionated Roblox Luau utility extension that simplifies working with complex codebase hierarchies by automatically generating file aliases and managing import statements. It works in conjunction with Luau LSP and a custom requirer module in order to parse the non-standard string paths.
 
 RequireOnRails does *not* prevent you from utilizing any default require behaviors. If the Luau module detects a non aliased path it will fall back to the default Roblox require behavior.
 
@@ -60,24 +60,26 @@ your-project/
 │   ├── Client/           # Client-side code (@Client alias)
 │   └── Shared/           # Shared code (@Shared alias)
 ├── .luaurc               # Generated/maintained by extension
-├── .requireonrails.json  # Extension configuration
 ├── default.project.json
 └── wally.toml
 ```
 ![ProjectTemplateScreenshot](images/ReadMe/ProjectTemplateScreenshot.png)
+
+If your project structure does not follow this then you can configure the extension settings to
+match your project.
 
 ## Quick Start
 
 ### Option 1: Use Template
 1. Open a fresh workspace in VS Code
 2. Open Command Palette (`Ctrl+Shift+P`)
-3. Run "RequireOnRails: Setup Default Project Structure"
+3. Run `Setup Default Project Structure`
 4. Activate RequireOnRails using the status bar button
 5. Start coding with `require("@ModuleName")` syntax!
 
 ### Option 2: Manual Setup
 1. Create your project structure manually
-2. Configure `directoriesToScan` and `importModulePaths` in VS Code settings to match your project
+2. Configure `directoriesToScan`, `manualAliases`, and `importModulePaths` in VS Code settings to match your project
 3. Get the RequireOnRails Luau module (You can use the `downloadLuauModule` command) and set up your import system
 4. Activate RequireOnRails using the status bar button
 
@@ -85,47 +87,43 @@ your-project/
 
 ### 1. Configuration
 Adjust these key settings to match your project structure in your VS Code settings (`.vscode/settings.json`):
-```json
+```jsonc
 {
-    /* These are the directories that RoR will scan through to make aliases. You
-    ** can add a path to your wally packages here to make them visible aswell.
-    */
+    // These are the directories that RoR will scan through to make aliases.
     "require-on-rails.directoriesToScan": [
         "src/Server",
         "src/Client", 
         "src/Shared"
     ],
 
-    /* This is the path to the importer you generate via the RequireOnRails 
-    ** luau module. This path should be in Roblox hierarchy terms.
-    */
+    // Manual aliases for absolute path support. Maps alias names to directory
+    // paths. These should typically be a superset of your directoriesToScan.
+    "require-on-rails.manualAliases": {
+        "Server": "src/Server",
+        "Client": "src/Client",
+        "Shared": "src/Shared"
+    },
+
+    // This is the path to the importer you generate via the RequireOnRails 
+    // luau module. This path should be in Roblox hierarchy terms.
     "require-on-rails.importModulePaths": [
         "ReplicatedStorage.src.Import", // Default expected path
         "game:GetService(\"ReplicatedStorage\").src.Import", // Potential alternate path
         "game.ReplicatedStorage.src.Import" // Potential alternate path
-    ]
-}
-```
+    ],
 
-If you want to support absolute paths then ensure you add those to the `manualAliases` in the `.requireonrails.json`.
-```json
-{
-  manualAliases: {
-    "Server": "src/Server",
-    "Client": "src/Client",
-    "Shared": "src/Shared"
-  }
+
 }
 ```
 
 ### 2. Project Structure
 Ensure your project follows a structure where:
 - Files have unique basenames across all scanned directories
-- Directory structure matches your `directoriesToScan` configuration
+- Directory structure matches your `.vscode/settings.json` configuration
 - Import system is properly configured
 
 ### 2. Import System Setup
-1. Get the RequireOnRails Luau module (link coming soon)
+1. Get the RequireOnRails Luau module via Wally or the `downloadLuauModule` command.
 2. Create an ImportGenerator by following the instructions in the module.
 3. Ensure your `importModulePaths` configuration points to your newly setup `Import` module
 4. Add the require override line to your files:
@@ -232,6 +230,11 @@ This extension contributes the following settings through `require-on-rails.*`:
   - **Default**: `["^_.*"]`
   - **Description**: Regex patterns for directories/files to ignore when scanning. By default ignores anything prefixed with underscore. Useful for ignoring things like the `_Index` folder for Wally packages.
 
+* `require-on-rails.manualAliases`: 
+  - **Type**: `object`
+  - **Default**: `{"@Server": "src/Server", "@Client": "src/Client", "@Shared": "src/Shared"}`
+  - **Description**: Manual aliases for absolute path support. Maps alias names to their corresponding directory paths (relative to workspace root). Used for absolute require path updates when files are moved between different alias directories.
+
 ### Advanced Settings
 <details>
 <summary>Avoid messing with these properties.</summary>
@@ -263,6 +266,17 @@ RequireOnRails provides the following commands accessible via Command Palette (`
 
 **Q: My aliases aren't generating**
 - Check that `directoriesToScan` matches your actual directory structure
+- Ensure file basenames are unique across all scanned directories
+- Verify RequireOnRails is activated (check status bar)
+
+**Q: Import require prompts not working**
+- Verify `importModulePaths` points to your actual import module location
+- Check that files contain `require("@SomeName")` statements
+- Ensure `tryToAddImportRequire` is enabled in settings
+
+**Q: File rename updates not working**
+- Check that the relevant enable settings are turned on (`enableBasenameUpdates`, etc.)
+- Verify the extension is activated and monitoring file changes
 - Ensure file basenames are unique across all scanned directories
 - Verify RequireOnRails is activated (check status bar)
 

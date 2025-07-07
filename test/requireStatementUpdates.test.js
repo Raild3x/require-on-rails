@@ -67,7 +67,14 @@ suite('Require Statement Update Tests', () => {
         fs.writeFileSync(oldPath, 'return {}');
         
         const messages = mockVSCodeMessages();
-        const restore = mockWorkspaceConfig(testWorkspaceUri);
+        const restore = mockWorkspaceConfig(testWorkspaceUri, {
+            manualAliases: {
+                '@Server': 'src/Server',
+                '@Client': 'src/Client',
+                '@Shared': 'src/Shared'
+            },
+            enableAbsolutePathUpdates: true
+        });
 
         try {
             fs.renameSync(oldPath, newPath);

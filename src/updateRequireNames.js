@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const vscode = require('vscode');
+const { print, warn } = require('./logger');
 
 const requirePrefix = '@';
 const supportedExtensions = ['.lua', '.luau'];
@@ -17,7 +18,7 @@ function shouldIgnoreDirectory(dirName, ignorePatterns) {
         try {
             return new RegExp(pattern).test(dirName);
         } catch (e) {
-            console.warn(`Invalid regex pattern: ${pattern}, falling back to exact match`);
+            warn(`Invalid regex pattern: ${pattern}, falling back to exact match`);
             return dirName.toLowerCase() === pattern.toLowerCase();
         }
     });
@@ -33,7 +34,7 @@ function shouldIgnoreDirectory(dirName, ignorePatterns) {
 function updateRequireNames(newFilePath, oldFilePath) {
     // Check if workspace folders exist
     if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
-        console.log('No workspace folder found. Skipping require name updates.');
+        print('No workspace folder found. Skipping require name updates.');
         return;
     }
     
@@ -48,7 +49,7 @@ function updateRequireNames(newFilePath, oldFilePath) {
 
     // Handle cases where basename didn't change
     if (oldFileBasename === newFileBasename) {
-        console.log(`File was ${operationType} but basename unchanged, no require updates needed`);
+        print(`File was ${operationType} but basename unchanged, no require updates needed`);
         
         if (isMove && config.get('enableAbsolutePathUpdates', true)) {
             handleAbsolutePathUpdates(newFilePath, oldFilePath, workspaceRoot);
@@ -282,19 +283,10 @@ function updateBasenameRequiresInFiles(oldFileBasename, newFileBasename, workspa
  * @param {string} workspaceRoot - Root directory of the workspace
  */
 function handleAbsolutePathUpdates(newFilePath, oldFilePath, workspaceRoot) {
-    const extensionAliasPath = path.join(workspaceRoot, '.requireonrails.json');
+    const config = vscode.workspace.getConfiguration('require-on-rails');
     
-    // Read manual aliases to get valid absolute path sources
-    let manualAliases = {};
-    if (fs.existsSync(extensionAliasPath)) {
-        try {
-            const extensionData = JSON.parse(fs.readFileSync(extensionAliasPath, 'utf8')) || {};
-            manualAliases = extensionData.manualAliases || {};
-        } catch (e) {
-            console.warn('Failed to read manual aliases for absolute path update');
-            return;
-        }
-    }
+    // Read manual aliases from VS Code settings
+    const manualAliases = config.get('manualAliases', {});
 
     // Extract relative paths from workspace root
     const oldRelative = path.relative(workspaceRoot, oldFilePath).replace(/\\/g, '/');
