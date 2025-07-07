@@ -60,7 +60,7 @@ function copyTemplateContents(templatePath, workspaceRoot) {
         let mergedDirs = 0;
 
         /**
-         * Recursively copies files and directories with individual file prompting.
+         * Recursively copies files and directories with automatic merging.
          * 
          * @param {string} srcDir - Source directory to copy from
          * @param {string} destDir - Destination directory to copy to
@@ -94,42 +94,44 @@ function copyTemplateContents(templatePath, workspaceRoot) {
                         console.log(`Copied file: ${itemRelativePath}`);
                         copiedItems++;
                     } else {
-                        // File exists, prompt user for decision
-                        const selection = await vscode.window.showWarningMessage(
-                            `File "${itemRelativePath}" already exists. What would you like to do?`,
-                            'Merge', 'Force Overwrite', 'Skip', 'Cancel All'
-                        );
-
-                        if (selection === 'Merge') {
-                            if (isJsonFile(srcPath)) {
-                                const mergedContent = await mergeJson(srcPath, destPath, itemRelativePath);
-                                if (mergedContent !== null) {
-                                    // Show diff before overwriting
-                                    await showFileDiff(destPath, srcPath, itemRelativePath, mergedContent);
-                                    console.log(`Merged JSON file: ${itemRelativePath}`);
-                                    mergedDirs++;
-                                }
-                            } else {
-                                await showFileDiff(srcPath, destPath, itemRelativePath);
-                                console.log(`Merged file: ${itemRelativePath}`);
+                        // File exists, attempt to merge
+                        if (isJsonConvertible(srcPath) && isJsonConvertible(destPath)) {
+                            // Store original content before merging
+                            const originalContent = fs.readFileSync(destPath, 'utf8');
+                            const mergedContent = await mergeJson(srcPath, destPath, itemRelativePath);
+                            if (mergedContent !== null) {
+                                fs.writeFileSync(destPath, mergedContent, 'utf8');
+                                console.log(`Merged JSON-compatible file: ${itemRelativePath}`);
                                 mergedDirs++;
+                                
+                                // Show notification with diff option
+                                showFileChangeNotification(itemRelativePath, originalContent, mergedContent, 'merged');
+                            } else {
+                                // JSON merge failed, copy template file
+                                const originalContent = fs.readFileSync(destPath, 'utf8');
+                                const templateContent = fs.readFileSync(srcPath, 'utf8');
+                                fs.copyFileSync(srcPath, destPath);
+                                console.log(`Overwritten file (JSON merge failed): ${itemRelativePath}`);
+                                copiedItems++;
+                                
+                                // Show notification with diff option
+                                showFileChangeNotification(itemRelativePath, originalContent, templateContent, 'overwritten');
                             }
-                        } else if (selection === 'Force Overwrite') {
+                        } else {
+                            // Not JSON-compatible, overwrite with template
+                            const originalContent = fs.readFileSync(destPath, 'utf8');
+                            const templateContent = fs.readFileSync(srcPath, 'utf8');
                             fs.copyFileSync(srcPath, destPath);
                             console.log(`Overwritten file: ${itemRelativePath}`);
                             copiedItems++;
-                        } else if (selection === 'Skip') {
-                            console.log(`Skipped existing file: ${itemRelativePath}`);
-                            skippedItems++;
-                        } else if (selection === 'Cancel All') {
-                            console.log('Template unpacking cancelled by user');
-                            vscode.window.showInformationMessage('Template unpacking cancelled.');
-                            return false; // Signal to stop processing
+                            
+                            // Show notification with diff option
+                            showFileChangeNotification(itemRelativePath, originalContent, templateContent, 'overwritten');
                         }
                     }
                 }
             }
-            return true; // Signal to continue processing
+            return true;
         }
 
         // Start the recursive copy (wrap in async function to handle promises)
@@ -168,7 +170,7 @@ function copyTemplateContents(templatePath, workspaceRoot) {
 }
 
 /**
- * Shows a diff between the template file and existing file, allowing user to manually merge
+ * Shows a diff between the template file and existing file (removed prompting)
  * 
  * @param {string} templateFilePath - Path to the template file
  * @param {string} existingFilePath - Path to the existing file
@@ -193,26 +195,19 @@ async function showFileDiff(templateFilePath, existingFilePath, relativePath, me
             }
         );
         
-        let message = `Diff opened for "${relativePath}". You can manually merge changes from the left (template) to the right (your file). The right side is your editable file.`;
-        
         if (mergedContent !== null) {
-            message = `Diff opened for "${relativePath}". This shows the merged JSON result. The file will be updated with the merged content.`;
-            
             // Write the merged content to the existing file
             fs.writeFileSync(existingFilePath, mergedContent, 'utf8');
+            console.log(`Applied merged content for ${relativePath}`);
         }
-        
-        // Show information message with instructions
-        vscode.window.showInformationMessage(message, 'Got it');
         
     } catch (error) {
         console.error('Error showing diff:', error);
-        vscode.window.showErrorMessage(`Failed to show diff for ${relativePath}: ${error.message}`);
     }
 }
 
 /**
- * Intelligently merges JSON files, preserving existing properties
+ * Intelligently merges JSON files, preserving existing properties and adding missing template properties
  * 
  * @param {string} templateFilePath - Path to the template JSON file
  * @param {string} existingFilePath - Path to the existing JSON file
@@ -221,7 +216,7 @@ async function showFileDiff(templateFilePath, existingFilePath, relativePath, me
  */
 async function mergeJson(templateFilePath, existingFilePath, relativePath) {
     try {
-        // Read both JSON files
+        // Read both files
         const templateContent = fs.readFileSync(templateFilePath, 'utf8');
         const existingContent = fs.readFileSync(existingFilePath, 'utf8');
         
@@ -231,12 +226,11 @@ async function mergeJson(templateFilePath, existingFilePath, relativePath) {
             templateJson = JSON.parse(templateContent);
             existingJson = JSON.parse(existingContent);
         } catch (parseError) {
-            console.warn(`Failed to parse JSON files for ${relativePath}, falling back to diff view:`, parseError.message);
-            await showFileDiff(templateFilePath, existingFilePath, relativePath);
+            console.warn(`Failed to parse JSON content for ${relativePath}:`, parseError.message);
             return null;
         }
         
-        // Perform deep merge, preserving existing values
+        // Perform deep merge, preserving existing values and adding missing template fields
         const mergedJson = deepMergeJson(existingJson, templateJson);
         
         // Return the merged content as formatted JSON string
@@ -244,15 +238,12 @@ async function mergeJson(templateFilePath, existingFilePath, relativePath) {
         
     } catch (error) {
         console.error(`Error merging JSON files for ${relativePath}:`, error);
-        vscode.window.showErrorMessage(`Failed to merge JSON file ${relativePath}: ${error.message}`);
-        // Fall back to showing diff
-        await showFileDiff(templateFilePath, existingFilePath, relativePath);
         return null;
     }
 }
 
 /**
- * Deep merges two JSON objects, preserving existing values in the base object
+ * Deep merges two JSON objects, preserving existing values and adding missing template properties
  * 
  * @param {object} existing - The existing JSON object (takes precedence)
  * @param {object} template - The template JSON object (provides new properties)
@@ -282,12 +273,12 @@ function deepMergeJson(existing, template) {
     // Create a new object starting with existing properties
     const result = { ...existing };
     
-    // Add properties from template that don't exist in existing
+    // Add properties from template that don't exist in existing (deep search)
     for (const key in template) {
         if (template.hasOwnProperty(key)) {
             if (!existing.hasOwnProperty(key)) {
                 // Property doesn't exist in existing, add it from template
-                result[key] = template[key];
+                result[key] = JSON.parse(JSON.stringify(template[key])); // Deep clone
             } else {
                 // Property exists in both, recursively merge if both are objects
                 if (typeof existing[key] === 'object' && existing[key] !== null &&
@@ -304,13 +295,107 @@ function deepMergeJson(existing, template) {
 }
 
 /**
- * Checks if a file is a JSON file based on its extension
+ * Checks if a file contains JSON-convertible content by attempting to parse it
  * 
  * @param {string} filePath - Path to the file
- * @returns {boolean} - True if the file has a .json extension
+ * @returns {boolean} - True if the file content can be parsed as JSON
  */
-function isJsonFile(filePath) {
-    return path.extname(filePath).toLowerCase() === '.json';
+function isJsonConvertible(filePath) {
+    try {
+        if (!fs.existsSync(filePath)) {
+            return false;
+        }
+        
+        const content = fs.readFileSync(filePath, 'utf8').trim();
+        
+        // Empty files are not JSON-convertible
+        if (!content) {
+            return false;
+        }
+        
+        // Try to parse as JSON
+        JSON.parse(content);
+        return true;
+    } catch (error) {
+        return false;
+    }
+}
+
+/**
+ * Shows a notification for a changed file with option to view diff
+ * 
+ * @param {string} relativePath - Relative path of the changed file
+ * @param {string} originalContent - Original file content before changes
+ * @param {string} newContent - New file content after changes
+ * @param {string} changeType - Type of change ('merged' or 'overwritten')
+ */
+function showFileChangeNotification(relativePath, originalContent, newContent, changeType) {
+    const message = changeType === 'merged' 
+        ? `Merged template fields into: ${relativePath}`
+        : `Overwritten file: ${relativePath}`;
+    
+    vscode.window.showInformationMessage(
+        message,
+        'Show Diff'
+    ).then(selection => {
+        if (selection === 'Show Diff') {
+            showContentDiff(relativePath, originalContent, newContent, changeType);
+        }
+    });
+}
+
+/**
+ * Shows a diff between original and new content using temporary files
+ * 
+ * @param {string} relativePath - Relative path for display purposes
+ * @param {string} originalContent - Original file content
+ * @param {string} newContent - New file content
+ * @param {string} changeType - Type of change for labeling
+ */
+async function showContentDiff(relativePath, originalContent, newContent, changeType) {
+    try {
+        const os = require('os');
+        const tempDir = os.tmpdir();
+        
+        // Create temporary files for diff
+        const originalTempPath = path.join(tempDir, `original_${path.basename(relativePath)}`);
+        const newTempPath = path.join(tempDir, `new_${path.basename(relativePath)}`);
+        
+        fs.writeFileSync(originalTempPath, originalContent, 'utf8');
+        fs.writeFileSync(newTempPath, newContent, 'utf8');
+        
+        // Create URIs for both temp files
+        const originalUri = vscode.Uri.file(originalTempPath);
+        const newUri = vscode.Uri.file(newTempPath);
+        
+        const titlePrefix = changeType === 'merged' ? 'Merged' : 'Overwritten';
+        
+        // Open diff editor
+        await vscode.commands.executeCommand(
+            'vscode.diff',
+            originalUri,
+            newUri,
+            `${titlePrefix}: ${relativePath} (Original ← → New)`,
+            {
+                preview: false,
+                preserveFocus: false
+            }
+        );
+        
+        // Clean up temp files after a delay
+        setTimeout(() => {
+            try {
+                if (fs.existsSync(originalTempPath)) fs.unlinkSync(originalTempPath);
+                if (fs.existsSync(newTempPath)) fs.unlinkSync(newTempPath);
+            } catch (cleanupError) {
+                console.warn('Failed to clean up temp files:', cleanupError);
+            }
+        }, 30000); // Clean up after 30 seconds
+        
+    } catch (error) {
+        console.error('Error showing content diff:', error);
+        vscode.window.showErrorMessage(`Failed to show diff for ${relativePath}: ${error.message}`);
+    }
 }
 
 module.exports = { unpackProjectTemplate };

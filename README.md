@@ -2,8 +2,7 @@
 
 An opinionated Roblox Luau utility extension that simplifies working with complex codebase hierarchies by automatically generating file aliases and managing import statements. It works in conjunction with a custom requirer in order to parse the string paths.
 
-RequireOnRails does *not* prevent you from utilizing any default require behaviors. If the Luau module detects a non aliased path it will fall back
-to the default Roblox require behavior.
+RequireOnRails does *not* prevent you from utilizing any default require behaviors. If the Luau module detects a non aliased path it will fall back to the default Roblox require behavior.
 
 ## Features
 
@@ -43,7 +42,7 @@ Toggle the extension on/off with a convenient status bar button showing the curr
 ## Requirements
 - Visual Studio Code
 - Luau LSP VSCode extension (or some other form of Roblox Luau language support)
-- RequireOnRails Luau module (available separately)
+- RequireOnRails Luau module
 - A project structure with unique file basenames (no duplicate names across scanned directories)
   
 ### Default Expected Project Structure
@@ -53,7 +52,7 @@ For the default configuration settings, RequireOnRails expects the following pro
 your-project/
 ├── .vscode/
 │   └── settings.json
-├── Packages              # Wally Packages
+├── Packages/             # Wally Packages
 │   └── RequireOnRails.lua
 ├── src/
 │   ├── Import.luau       # Import module tailored to your project
@@ -79,21 +78,17 @@ your-project/
 ### Option 2: Manual Setup
 1. Create your project structure manually
 2. Configure `directoriesToScan` and `importModulePaths` in VS Code settings to match your project
-3. Get the RequireOnRails Luau module and set up your import system
+3. Get the RequireOnRails Luau module (You can use the `downloadLuauModule` command) and set up your import system
 4. Activate RequireOnRails using the status bar button
 
 ## Setup Guide
 
 ### 1. Configuration
 Adjust these key settings to match your project structure in your VS Code settings (`.vscode/settings.json`):
-
-Example:
 ```json
 {
     /* These are the directories that RoR will scan through to make aliases. You
-    ** can add a path to your wally packages here to make them visible aswell. It is
-    ** *HIGHLY* reccomended to make manual aliases in the .requireonrails.json for
-    ** any top level directories you implement here.
+    ** can add a path to your wally packages here to make them visible aswell.
     */
     "require-on-rails.directoriesToScan": [
         "src/Server",
@@ -105,9 +100,21 @@ Example:
     ** luau module. This path should be in Roblox hierarchy terms.
     */
     "require-on-rails.importModulePaths": [
-        "ReplicatedStorage.src._Import", // Default expected path
-        "game:GetService(\"ReplicatedStorage\").src._Import" // Potential alternate path
+        "ReplicatedStorage.src.Import", // Default expected path
+        "game:GetService(\"ReplicatedStorage\").src.Import", // Potential alternate path
+        "game.ReplicatedStorage.src.Import" // Potential alternate path
     ]
+}
+```
+
+If you want to support absolute paths then ensure you add those to the `manualAliases` in the `.requireonrails.json`.
+```json
+{
+  manualAliases: {
+    "Server": "src/Server",
+    "Client": "src/Client",
+    "Shared": "src/Shared"
+  }
 }
 ```
 
@@ -120,7 +127,7 @@ Ensure your project follows a structure where:
 ### 2. Import System Setup
 1. Get the RequireOnRails Luau module (link coming soon)
 2. Create an ImportGenerator by following the instructions in the module.
-3. Ensure your `importModulePaths` configuration points to your newly setup Import module
+3. Ensure your `importModulePaths` configuration points to your newly setup `Import` module
 4. Add the require override line to your files:
    ```lua
    -- This line may vary depending on your `importModulePaths` configuration
@@ -131,7 +138,7 @@ Ensure your project follows a structure where:
 
 ## Usage
 
-1. **File Organization**: Organize your Luau files in the directories specified in `directoriesToScan`. Ensure your `_Import` file is setup.
+1. **File Organization**: Organize your Luau files in the directories specified in `directoriesToScan`. Ensure your `Import` module file is setup.
 
 2. **Activation**: Click the status bar button to toggle RequireOnRails on/off
 
@@ -147,7 +154,7 @@ Ensure your project follows a structure where:
 
 ⚠️ **Configuration Required**: You must configure `directoriesToScan` and `importModulePaths` to match your specific project structure.
 
-⚠️ **RequireOnRails Module**: This extension requires a separate Luau module to function. The module will be available separately.
+⚠️ **RequireOnRails Module**: This extension requires a separate Luau module to function. The module is availible via Wally.
 
 
 ## Extension Settings and Commands
