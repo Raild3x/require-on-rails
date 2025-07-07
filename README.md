@@ -175,8 +175,11 @@ This extension contributes the following settings through `require-on-rails.*`:
 * `require-on-rails.importModulePaths`: 
   - **Type**: `array<string>`
   - **Default**: 
-    - `ReplicatedStorage:FindFirstChild("_Import", true)`
-    - `game:GetService("ReplicatedStorage"):FindFirstChild("_Import", true)`
+    - `"game.ReplicatedStorage.src.Import"`
+    - `"ReplicatedStorage.src.Import"`
+    - `"game:GetService(\"ReplicatedStorage\").src.Import"`
+    - `"game:GetService(\"ReplicatedStorage\"):FindFirstChild(\"Import\", true)"`
+    - `"ReplicatedStorage:FindFirstChild(\"Import\", true)"`
   - **Description**: Valid import module paths for the require override. Uses the first value as default when adding import statements. 
   - ***⚠️ Modify this to match your project structure!***
 
@@ -190,6 +193,15 @@ This extension contributes the following settings through `require-on-rails.*`:
   - **Default**: `0.45`
   - **Description**: Opacity level (0.0-1.0) for import require override lines in the editor. Lower values make lines more transparent
 
+* `preferredImportPlacement`: 
+  - **Type**: `string`
+  - **Default**: `"TopOfFile"`
+  - **Enum**: `["TopOfFile", "BeforeFirstRequire", "AfterDefiningRobloxServices"]`
+  - **Description**: Controls where the import require definition is placed when automatically added to files
+    - `TopOfFile`: Place import at the very top of the file
+    - `BeforeFirstRequire`: Place import before the first require statement  
+    - `AfterDefiningRobloxServices`: Place import after Roblox service definitions (game:GetService calls)
+
 ### Require Statement Updates
 
 * `require-on-rails.enableBasenameUpdates`: 
@@ -199,7 +211,7 @@ This extension contributes the following settings through `require-on-rails.*`:
 
 * `require-on-rails.enableAbsolutePathUpdates`: 
   - **Type**: `boolean`
-  - **Default**: `true`
+  - **Default**: `false`
   - **Description**: Whether to prompt for updating absolute require paths when files are moved between different alias directories
 
 * `require-on-rails.enableCollisionDetection`: 
@@ -241,7 +253,8 @@ This extension contributes the following settings through `require-on-rails.*`:
 RequireOnRails provides the following commands accessible via Command Palette (`Ctrl+Shift+P`):
 
 * **Toggle RoR Active**: Enable or disable RequireOnRails functionality
-* **Setup Default Project Structure**: Create a template project structure optimized for RequireOnRails
+* **Setup Default Project Structure**: Setup a project structure ready out of the box for RequireOnRails
+* **Download Luau Module**: Download the RequireOnRails Luau module via Wally package manager or as a raw Luau file
 </details>
 
 ## Troubleshooting
