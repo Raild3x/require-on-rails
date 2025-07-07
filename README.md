@@ -63,10 +63,11 @@ your-project/
 ├── default.project.json
 └── wally.toml
 ```
+Your project will likely look something like this:
+
 ![ProjectTemplateScreenshot](images/ReadMe/ProjectTemplateScreenshot.png)
 
-If your project structure does not follow this then you can configure the extension settings to
-match your project.
+If your project structure does not follow this exactly then you can configure the extension settings to match your project as needed.
 
 ## Quick Start
 
