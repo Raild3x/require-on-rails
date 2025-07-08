@@ -16,6 +16,7 @@ function createMockConfig(overrides = {}) {
         tryToAddImportRequire: true,
         importOpacity: 0.45,
         preferImportPlacement: 'BeforeFirstRequire',
+        addSeleneCommentToImport: false, // Add the missing configuration property
         manualAliases: {
             '@Server': 'src/Server',
             '@Client': 'src/Client', 
@@ -26,8 +27,10 @@ function createMockConfig(overrides = {}) {
     const config = { ...defaults, ...overrides };
     
     return {
-        get: (key) => config[key],
-        has: () => true,
+        get: (key, defaultValue) => {
+            return config.hasOwnProperty(key) ? config[key] : defaultValue;
+        },
+        has: (key) => config.hasOwnProperty(key),
         inspect: () => undefined,
         update: () => Promise.resolve()
     };
@@ -37,7 +40,27 @@ function mockWorkspaceConfig(testWorkspaceUri, configOverrides = {}) {
     const originalConfig = vscode.workspace.getConfiguration;
     const originalWorkspaceFolders = vscode.workspace.workspaceFolders;
     
-    vscode.workspace.getConfiguration = () => createMockConfig(configOverrides);
+    vscode.workspace.getConfiguration = (section) => {
+        // If a specific section is requested, filter overrides for that section
+        let sectionOverrides = {};
+        if (section) {
+            for (const [key, value] of Object.entries(configOverrides)) {
+                if (key.startsWith(`${section}.`)) {
+                    const configKey = key.substring(section.length + 1);
+                    sectionOverrides[configKey] = value;
+                } else if (!key.includes('.')) {
+                    // Direct property without section prefix
+                    sectionOverrides[key] = value;
+                }
+            }
+        } else {
+            // No section specified, use all overrides
+            sectionOverrides = configOverrides;
+        }
+        
+        return createMockConfig(sectionOverrides);
+    };
+    
     Object.defineProperty(vscode.workspace, 'workspaceFolders', {
         value: [{ uri: testWorkspaceUri }],
         writable: true,

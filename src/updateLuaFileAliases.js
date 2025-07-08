@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const vscode = require('vscode');
-const { print, warn } = require('./logger');
+const { print, warn, error } = require('./logger');
 
 const extenionName = 'require-on-rails';
 const supportedExtensions = ['.lua', '.luau'];
@@ -209,7 +209,7 @@ function generateFileAliases() {
         try {
             luaurc = rawData ? JSON.parse(rawData) : {};
         } catch (e) {
-            print("Failed to parse .luaurc as JSON:", e);
+            error("Failed to parse .luaurc as JSON:", e);
             vscode.window.showErrorMessage("RequireOnRails: Failed to parse .luaurc as JSON. Please fix or delete the file.");
             return
         }

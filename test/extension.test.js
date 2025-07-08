@@ -226,8 +226,44 @@ return {}`
         }
     });
 
-    test('Should add selene comment when selene.toml exists', async () => {
-        const restore = mockWorkspaceConfig(testWorkspaceUri);
+    test('Should not add selene comment by default even when selene.toml exists', async () => {
+        const restore = mockWorkspaceConfig(testWorkspaceUri); // No explicit configuration
+
+        try {
+            // Create selene.toml file
+            createTestFiles(testWorkspacePath, {
+                'selene.toml': '[rules]',
+                'src/Server/DefaultBehavior.luau': `
+local something = require("@SomeModule")
+return {}`
+            });
+
+            const filePath = path.join(testWorkspacePath, 'src/Server/DefaultBehavior.luau');
+            const defaultImportModulePath = '"@rbxts/services"';
+            
+            const success = addImportToSingleFile(filePath, defaultImportModulePath, 'TopOfFile');
+            assert.ok(success, 'Should successfully add import without selene comment by default');
+            
+            const content = fs.readFileSync(filePath, 'utf8');
+            const expectedSeleneComment = '-- selene: allow(incorrect_standard_library_use)';
+            const expectedImport = `require = require(${defaultImportModulePath})(script) :: typeof(require)`;
+            
+            assert.ok(!content.includes(expectedSeleneComment), 'Should not include selene comment by default');
+            assert.ok(content.includes(expectedImport), 'Should include import require definition');
+            
+        } finally {
+            restore();
+            cleanupTestFiles(testWorkspacePath, [
+                'selene.toml',
+                'src/Server/DefaultBehavior.luau'
+            ]);
+        }
+    });
+
+    test('Should add selene comment when selene.toml exists and addSeleneCommentToImport is explicitly enabled', async () => {
+        const restore = mockWorkspaceConfig(testWorkspaceUri, {
+            'require-on-rails.addSeleneCommentToImport': true // Explicitly enable
+        });
 
         try {
             // Create selene.toml file
@@ -245,10 +281,11 @@ return {}`
             assert.ok(success, 'Should successfully add import with selene comment');
             
             const content = fs.readFileSync(filePath, 'utf8');
+            
             const expectedSeleneComment = '-- selene: allow(incorrect_standard_library_use)';
             const expectedImport = `require = require(${defaultImportModulePath})(script) :: typeof(require)`;
             
-            assert.ok(content.includes(expectedSeleneComment), 'Should include selene comment');
+            assert.ok(content.includes(expectedSeleneComment), 'Should include selene comment when enabled');
             assert.ok(content.includes(expectedImport), 'Should include import require definition');
             
             // Verify order: selene comment should come before import
@@ -261,6 +298,42 @@ return {}`
             cleanupTestFiles(testWorkspacePath, [
                 'selene.toml',
                 'src/Server/WithSelene.luau'
+            ]);
+        }
+    });
+
+    test('Should not add selene comment when addSeleneCommentToImport is explicitly disabled', async () => {
+        const restore = mockWorkspaceConfig(testWorkspaceUri, {
+            'require-on-rails.addSeleneCommentToImport': false // Explicitly disable
+        });
+
+        try {
+            // Create selene.toml file
+            createTestFiles(testWorkspacePath, {
+                'selene.toml': '[rules]',
+                'src/Server/WithoutSelene.luau': `
+local something = require("@SomeModule")
+return {}`
+            });
+
+            const filePath = path.join(testWorkspacePath, 'src/Server/WithoutSelene.luau');
+            const defaultImportModulePath = '"@rbxts/services"';
+            
+            const success = addImportToSingleFile(filePath, defaultImportModulePath, 'TopOfFile');
+            assert.ok(success, 'Should successfully add import without selene comment');
+            
+            const content = fs.readFileSync(filePath, 'utf8');
+            const expectedSeleneComment = '-- selene: allow(incorrect_standard_library_use)';
+            const expectedImport = `require = require(${defaultImportModulePath})(script) :: typeof(require)`;
+            
+            assert.ok(!content.includes(expectedSeleneComment), 'Should not include selene comment when disabled');
+            assert.ok(content.includes(expectedImport), 'Should still include import require definition');
+            
+        } finally {
+            restore();
+            cleanupTestFiles(testWorkspacePath, [
+                'selene.toml',
+                'src/Server/WithoutSelene.luau'
             ]);
         }
     });

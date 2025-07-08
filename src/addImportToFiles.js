@@ -187,7 +187,7 @@ function addImportToSingleFile(filePath, defaultImportModulePath, preferredImpor
     const lines = content.split('\n');
     
     const config = vscode.workspace.getConfiguration('require-on-rails');
-    const shouldAddSeleneComment = config.get("addSeleneCommentToImport", true);
+    const shouldAddSeleneComment = config.get("addSeleneCommentToImport", false);
     
     // Check if selene.toml exists in workspace
     const workspaceFolder = vscode.workspace.workspaceFolders[0];
