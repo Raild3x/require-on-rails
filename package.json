@@ -31,6 +31,10 @@
         "title": "Download Luau Module"
       },
       {
+        "command": "require-on-rails.addImportToAllFiles",
+        "title": "Add Import require def to all Luau files."
+      },
+      {
         "command": "require-on-rails.regenerateAliases",
         "title": "Regenerate Aliases (Debug)"
       }
@@ -94,6 +98,11 @@
             "Place import after Roblox service definitions (game:GetService calls)"
           ],
           "description": "Controls where the import require definition is placed when automatically added to files"
+        },
+        "require-on-rails.addSeleneCommentToImport": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether to add a comment to the import require definition to disable Selene warnings for that line."
         },
 
         "require-on-rails.directoriesToScan": {

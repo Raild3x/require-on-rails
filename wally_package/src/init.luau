@@ -495,7 +495,7 @@ local function CreateImportGenerator(_config: Config): ContextualImportGenerator
 
 		assert(root and root:IsA("Instance"), "Root must be a valid Instance")
 		if not primaryRoot then
-			warn(`Primary root ancestor not found for {root:GetFullName()}. Some features may not work correctly.`)
+			warn(`Primary root ancestor not found for {root:GetFullName()}. Relative paths will not be supported.`)
 		end
 
 		debugLog(debug, "Generated import function for", root:GetFullName(), "with primary root", primaryRoot and primaryRoot.Name or "none")

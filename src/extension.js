@@ -5,6 +5,7 @@ const { updateRequireNames } = require('./updateRequireNames');
 const { hideLines, unhideLines } = require('./hideLines');
 const { unpackProjectTemplate } = require('./unpackProjectTemplate');
 const { downloadLuauModule } = require('./downloadLuauModule');
+const { addImportToAllFiles } = require('./addImportToFiles');
 const { setOutputChannel, print, warn, error } = require('./logger');
 
 let isActive = false;
@@ -221,6 +222,10 @@ function activate(context) {
 
     registerCommand(context, 'require-on-rails.downloadLuauModule', () => {
         downloadLuauModule(context);
+    });
+
+    registerCommand(context, 'require-on-rails.addImportToAllFiles', () => {
+        addImportToAllFiles();
     });
 
     // Clean up on deactivate

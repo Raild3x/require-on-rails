@@ -29,7 +29,6 @@
                     "$path": "src/Shared"
                 },
                 "Import": {
-                    "$className": "ModuleScript",
                     "$path": "src/Import.luau"
                 }
             }

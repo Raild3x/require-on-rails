@@ -2,9 +2,13 @@ const vscode = require('vscode');
 const path = require('path');
 const fs = require('fs');
 const { print } = require('./logger');
+const { addImportToSingleFile } = require('./addImportToFiles');
 
 // Store decoration types globally to properly dispose of them
 let currentDecorationType = null;
+
+// Store the current editor document to avoid unnecessary reprocessing
+let currentEditorDocument = null;
 
 // Utility to escape regex special characters in a string
 function escapeRegExp(string) {
@@ -27,11 +31,15 @@ function hideLines(editor) {
     // Clear any existing decorations first
     unhideLines(editor);
 
+    if (currentEditorDocument && currentEditorDocument === editor.document) {
+        return; // If the document hasn't changed, no need to reprocess
+    }
+    currentEditorDocument = editor.document; // Update current document reference
+
     const config = vscode.workspace.getConfiguration('require-on-rails');
     const importModulePaths = config.get("importModulePaths");
     const pathsArray = Array.isArray(importModulePaths) ? importModulePaths : [importModulePaths];
     const defaultImportModulePath = pathsArray[0];
-    const importRequireDef = `require = require(${defaultImportModulePath})(script) :: typeof(require)`;
     const tryToAddImportRequire = config.get("tryToAddImportRequire");
 
     // Look for any of the valid import require definitions
@@ -49,84 +57,24 @@ function hideLines(editor) {
     // 2. There's no valid import require definition present
     // 3. There's at least one require statement with '@' symbol
     if (tryToAddImportRequire && !hasValidImportRequire && hasRequireWithAtSymbol) {
-        // Prompt the user for if they want to add the import require definition, if they do then append it to the top of the file
+        // Prompt the user for if they want to add the import require definition
         vscode.window.showWarningMessage(
             `This file is missing the import require definition. Would you like to add it?`,
             'Yes', 'No'
         ).then((selection) => {
             if (selection === 'Yes') {
-                const seleneComment = '-- selene: allow(incorrect_standard_library_use)';
-                const importRequire = `${importRequireDef}`;
-                let insertLine = 0;
-                
-                const lines = text.split('\n');
-                
-                // Check if selene.toml exists in workspace
-                const workspaceFolder = vscode.workspace.getWorkspaceFolder(editor.document.uri);
-                const hasSeleneConfig = workspaceFolder && 
-                    fs.existsSync(path.join(workspaceFolder.uri.fsPath, 'selene.toml'));
-                
+                const filePath = editor.document.fileName;
                 const preferredImportPlacement = config.get("preferredImportPlacement");
-
-                // Check if selene comment already exists
-                const hasSeleneComment = lines.some(line => 
-                    line.trim() === seleneComment
-                );
                 
-                // Determine insertion line based on preference
-                switch (preferredImportPlacement) {
-                    case "TopOfFile":
-                        insertLine = 0;
-                        break;
-                        
-                    case "BeforeFirstRequire":
-                        // Look for existing 'require(' on global scope
-                        for (let i = 0; i < lines.length; i++) {
-                            const line = lines[i].trim();
-                            if (line.startsWith('require(') || /^[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*require\(/.test(line)) {
-                                insertLine = i;
-                                break;
-                            }
-                        }
-                        break;
-                        
-                    case "AfterDefiningRobloxServices":
-                        // Look for ReplicatedStorage service or other service definitions
-                        for (let i = 0; i < lines.length; i++) {
-                            const line = lines[i].trim();
-                            if (line.includes('game:GetService')) {
-                                // Find first empty line after this line
-                                for (let j = i + 1; j < lines.length; j++) {
-                                    if (lines[j].trim() === '') {
-                                        insertLine = j;
-                                        break;
-                                    }
-                                }
-                                // If no empty line found, insert right after the service line
-                                if (insertLine === 0) {
-                                    insertLine = i + 1;
-                                }
-                                break;
-                            }
-                        }
-                        break;
+                // Use the centralized addImportToSingleFile function
+                const success = addImportToSingleFile(filePath, defaultImportModulePath, preferredImportPlacement);
+                
+                if (success) {
+                    // Refresh the editor to show the new content and apply decorations
+                    setTimeout(() => {
+                        hideLines(editor); // Call hideLines again to apply the decoration
+                    }, 100);
                 }
-                
-                const targetLine = editor.document.lineAt(insertLine);
-                const edit = new vscode.WorkspaceEdit();
-                
-                // Prepare the text to insert
-                let textToInsert = '';
-                if (hasSeleneConfig && !hasSeleneComment) {
-                    textToInsert += seleneComment + '\n';
-                }
-                textToInsert += importRequire + '\n';
-                
-                edit.insert(editor.document.uri, targetLine.range.start, textToInsert);
-                vscode.workspace.applyEdit(edit).then(() => {
-                    editor.revealRange(targetLine.range);
-                    hideLines(editor); // Call hideLines again to apply the decoration
-                });
             }
         });
         return; // Exit early if the import require definition is not present

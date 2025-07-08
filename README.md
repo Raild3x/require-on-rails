@@ -37,7 +37,7 @@ The extension automatically hides or reduces the opacity of boilerplate import l
 ### Status Bar Integration
 Toggle the extension on/off with a convenient status bar button showing the current state.
 
-![Status Button Image](images/ReadMe/StatusButtonImage.png)
+![Status Button Image](images/ReadMe/StatusButtonImage.jpeg)
 
 ## Requirements
 - Visual Studio Code
@@ -65,7 +65,7 @@ your-project/
 ```
 Your project will likely look something like this:
 
-![ProjectTemplateScreenshot](images/ReadMe/ProjectTemplateScreenshot.png)
+![ProjectTemplateScreenshot](images/ReadMe/ProjectTemplateScreenshot.jpeg)
 
 If your project structure does not follow this exactly then you can configure the extension settings to match your project as needed.
 

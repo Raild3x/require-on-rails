@@ -16,7 +16,10 @@
     },
 
     "require-on-rails.importModulePaths": [
-        "ReplicatedStorage.src.Import"
+        "game.ReplicatedStorage.src.Import",
+        "ReplicatedStorage.src.Import",
+        "game:GetService(\"ReplicatedStorage\").src.Import",
+        "ReplicatedStorage:FindFirstChild(\"Import\", true)"
     ]
 
 }
