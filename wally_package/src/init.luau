@@ -52,14 +52,11 @@
 	Some other module...
 	```lua
 	-- Generate a contextual import/require for this specific module
-	require = require(ReplicatedStorage.Import)(script) :: typeof(require)
+	require = require(ReplicatedStorage.Import)(script)
 
 	-- Import using absolute paths (unambiguous)
 	local Types = require("@Shared/Types")
 	local PlayerService = require("@Server/Services/PlayerService")
-
-	-- Import using aliases
-	local StringUtils = require("@Utils/StringUtils")
 
 	-- Import using ambiguous paths (searches from current context; down and then up (BFS))
 	-- This will search for the nearest module named "Config".
@@ -81,8 +78,8 @@ type PerformanceStats = {
 	averageSearchTime: number
 }
 
-export type ContextualImport = (string | Instance) -> any
-export type ContextualImportGenerator = (Instance) -> ContextualImport
+type Require = typeof(require)
+export type ContextualImportGenerator = (Instance) -> Require
 
 -- Enhanced configuration type
 export type Config = {
@@ -347,10 +344,13 @@ local function searchForModule(origin: Instance, targetName: string, ancestors: 
 
 		-- Search upward through the hierarchy until we hit a valid ancestor
 		local current = origin :: any
-		while current and not ancestorSet[current] do
+		while current do
 			local found = searchDown(current, 0)
 			if found then 
 				return found 
+			end
+			if ancestorSet[current] then -- Stop searching if the current is a top level ancestor
+				break
 			end
 			current = current.Parent
 		end
@@ -494,7 +494,7 @@ local function CreateImportGenerator(_config: Config): ContextualImportGenerator
 		end
 
 		assert(root and root:IsA("Instance"), "Root must be a valid Instance")
-		if not primaryRoot then
+		if not primaryRoot and debug then
 			warn(`Primary root ancestor not found for {root:GetFullName()}. Relative paths will not be supported.`)
 		end
 
@@ -509,7 +509,7 @@ local function CreateImportGenerator(_config: Config): ContextualImportGenerator
 				local startTime = tick()
 				
 				-- Handle non-custom string paths and direct instances
-				if typeof(target) == "string" and not target:match("^@") then
+				if typeof(target) == "string" and (target:match("^@self/") or not target:match("^@")) then
 					local result = require(target) :: any
 					if trackPerf then trackPerformance(false, tick() - startTime) end
 					return result
