@@ -75,7 +75,7 @@ type PerformanceStats = {
 	cacheHits: number,
 	cacheMisses: number,
 	searchTime: number,
-	averageSearchTime: number
+	averageSearchTime: number,
 }
 
 type Require = typeof(require)
@@ -91,7 +91,7 @@ export type Config = {
 	CaseSensitive: boolean?,
 	TrackPerformance: boolean?,
 	CircularDependencyDetection: boolean?,
-	MicroprofilerEnabled: boolean?
+	MicroprofilerEnabled: boolean?,
 }
 
 ---------------------------------------------------------------------------------------
@@ -103,7 +103,7 @@ local globalStats: PerformanceStats = {
 	cacheHits = 0,
 	cacheMisses = 0,
 	searchTime = 0,
-	averageSearchTime = 0
+	averageSearchTime = 0,
 }
 
 -- Microprofiler labels
@@ -116,7 +116,8 @@ local PROFILER_LABELS = {
 	MODULE_SEARCH = "RoR:ModuleSearch",
 	ROOT_SEARCH = "RoR:RootSearch",
 	PATH_TRAVERSE = "RoR:PathTraverse",
-	CACHE_INVALIDATE = "RoR:CacheInvalidate"
+	CACHE_INVALIDATE = "RoR:CacheInvalidate",
+	MODULE_LOAD = "RoR:ModuleLoad",
 }
 
 --[=[
@@ -173,11 +174,11 @@ local function isValidContainer(instance: Instance, ignorePredicate: ((Instance)
 	if instance.Name == "_Index" then
 		return false
 	end
-	
+
 	if ignorePredicate and ignorePredicate(instance) then
 		return false
 	end
-	
+
 	return true
 end
 
@@ -195,31 +196,31 @@ local function bfsFindPath(rootInstance: Instance, pathParts: { string }, config
 		local maxDepth = config.MaxSearchDepth or 50
 		local caseSensitive = config.CaseSensitive ~= false -- Default to true
 		local debug = config.Debug or false
-		
+
 		debugLog(debug, "Searching for path", table.concat(pathParts, "/"), "from", rootInstance.Name)
-		
+
 		local queue: { { instance: Instance, depth: number } } = { { instance = rootInstance, depth = 1 } }
 		local visited = {}
 
 		while #queue > 0 do
 			local current = table.remove(queue, 1)
 			assert(current, "Queue item should not be nil")
-			
+
 			if current.depth > maxDepth then
 				debugLog(debug, "Max search depth", maxDepth, "exceeded")
 				break
 			end
-			
+
 			-- Avoid infinite loops
 			if visited[current.instance] then
 				continue
 			end
 			visited[current.instance] = true
-			
+
 			for _, child in current.instance:GetChildren() do
 				local childName = normalizePath(child.Name, caseSensitive)
 				local targetName = normalizePath(pathParts[current.depth], caseSensitive)
-				
+
 				if childName == targetName then
 					-- Found matching path segment
 					if current.depth == #pathParts then
@@ -258,16 +259,16 @@ local function searchRoots(validAncestors: { Instance }, pathParts: { string }, 
 		assert(typeof(validAncestors) == "table", "validAncestors must be a table")
 
 		local searchedRoots: { Instance } = {}
-		
+
 		local function trySearchRoot(rootInstance: Instance): ModuleScript?
 			assert(typeof(rootInstance) == "Instance", "Root instance must be an Instance")
-			
+
 			-- Avoid searching the same root multiple times
 			if table.find(searchedRoots, rootInstance) then
 				return nil
 			end
 			table.insert(searchedRoots, rootInstance)
-			
+
 			return bfsFindPath(rootInstance, pathParts, config)
 		end
 
@@ -278,7 +279,7 @@ local function searchRoots(validAncestors: { Instance }, pathParts: { string }, 
 				return found
 			end
 		end
-		
+
 		return nil
 	end)
 end
@@ -293,14 +294,19 @@ end
 	@param config - Configuration object
 	@return ModuleScript? - The found module or nil if not found
 ]=]
-local function searchForModule(origin: Instance, targetName: string, ancestors: { Instance }, config: Config): ModuleScript?
+local function searchForModule(
+	origin: Instance,
+	targetName: string,
+	ancestors: { Instance },
+	config: Config
+): ModuleScript?
 	return profiledCall(config.MicroprofilerEnabled or false, PROFILER_LABELS.MODULE_SEARCH, function(): ModuleScript?
 		local searched = {}
 		local ancestorSet = {}
 		local maxDepth = config.MaxSearchDepth or 50
 		local caseSensitive = config.CaseSensitive ~= false
 		local debug = config.Debug or false
-		
+
 		-- Create a set for O(1) ancestor lookups
 		for _, ancestor in ancestors do
 			ancestorSet[ancestor] = true
@@ -313,8 +319,8 @@ local function searchForModule(origin: Instance, targetName: string, ancestors: 
 			Uses memoization to avoid redundant searches.
 		]]
 		local function searchDown(parent: Instance, depth: number): ModuleScript?
-			if searched[parent] or depth > maxDepth then 
-				return nil 
+			if searched[parent] or depth > maxDepth then
+				return nil
 			end
 			searched[parent] = true
 
@@ -333,12 +339,12 @@ local function searchForModule(origin: Instance, targetName: string, ancestors: 
 			for _, child in parent:GetChildren() do
 				if isValidContainer(child, config.IgnorePredicate) then
 					local found = searchDown(child, depth + 1)
-					if found then 
-						return found 
+					if found then
+						return found
 					end
 				end
 			end
-			
+
 			return nil
 		end
 
@@ -346,15 +352,15 @@ local function searchForModule(origin: Instance, targetName: string, ancestors: 
 		local current = origin :: any
 		while current do
 			local found = searchDown(current, 0)
-			if found then 
-				return found 
+			if found then
+				return found
 			end
 			if ancestorSet[current] then -- Stop searching if the current is a top level ancestor
 				break
 			end
 			current = current.Parent
 		end
-		
+
 		debugLog(debug, "Ambiguous module", targetName, "not found")
 		return nil
 	end)
@@ -373,15 +379,15 @@ local function resolveAlias(path: string, aliases: { [string]: string }?, microp
 		if not aliases then
 			return path
 		end
-		
+
 		local pathWithoutPrefix = path:sub(2) -- Remove '@'
 		local firstSegment = pathWithoutPrefix:split("/")[1]
-		
+
 		if aliases[firstSegment] then
 			local remainingPath = pathWithoutPrefix:sub(#firstSegment + 1)
 			return "@" .. aliases[firstSegment] .. remainingPath
 		end
-		
+
 		return path
 	end)
 end
@@ -431,7 +437,7 @@ local function CreateImportGenerator(_config: Config): ContextualImportGenerator
 	local trackPerf = config.TrackPerformance or false
 	local circularDetection = config.CircularDependencyDetection ~= false -- Default to true
 	local microprofilerEnabled = config.MicroprofilerEnabled or false
-	
+
 	-- Convert ancestor dictionary to array for easier iteration
 	for _, ancestor in validAncestors do
 		table.insert(ancestorsArray, ancestor)
@@ -454,7 +460,7 @@ local function CreateImportGenerator(_config: Config): ContextualImportGenerator
 		if existing then
 			return existing
 		end
-		
+
 		local newCache: ModuleCache = {}
 		contextCache[context] = newCache
 
@@ -498,7 +504,13 @@ local function CreateImportGenerator(_config: Config): ContextualImportGenerator
 			warn(`Primary root ancestor not found for {root:GetFullName()}. Relative paths will not be supported.`)
 		end
 
-		debugLog(debug, "Generated import function for", root:GetFullName(), "with primary root", primaryRoot and primaryRoot.Name or "none")
+		debugLog(
+			debug,
+			"Generated import function for",
+			root:GetFullName(),
+			"with primary root",
+			primaryRoot and primaryRoot.Name or "none"
+		)
 
 		--[=[
 			The actual import function that resolves module paths.
@@ -507,28 +519,32 @@ local function CreateImportGenerator(_config: Config): ContextualImportGenerator
 		local function Require(target: string | Instance): any
 			return profiledCall(microprofilerEnabled, PROFILER_LABELS.REQUIRE, function()
 				local startTime = tick()
-				
+
 				-- Handle non-custom string paths and direct instances
 				if typeof(target) == "string" and (target:match("^@self/") or not target:match("^@")) then
 					local result = require(target) :: any
-					if trackPerf then trackPerformance(false, tick() - startTime) end
+					if trackPerf then
+						trackPerformance(false, tick() - startTime)
+					end
 					return result
 				elseif typeof(target) == "Instance" then
 					assert(target:IsA("ModuleScript"), "Target must be a ModuleScript instance")
-					
+
 					-- Circular dependency detection
 					if circularDetection and currentlyRequiring[target] then
 						error(`Circular dependency detected: {target:GetFullName()} is already being required`)
 					end
-					
+
 					currentlyRequiring[target] = true
 					local result = require(target) :: any
 					currentlyRequiring[target] = nil
-					
-					if trackPerf then trackPerformance(false, tick() - startTime) end
+
+					if trackPerf then
+						trackPerformance(false, tick() - startTime)
+					end
 					return result
 				end
-				
+
 				assert(typeof(target) == "string", "Target must be a string or Instance")
 
 				-- Resolve aliases first
@@ -539,13 +555,17 @@ local function CreateImportGenerator(_config: Config): ContextualImportGenerator
 				if cache[resolvedTarget] then
 					return profiledCall(microprofilerEnabled, PROFILER_LABELS.CACHE_HIT, function()
 						debugLog(debug, "Cache hit for", resolvedTarget)
-						if trackPerf then trackPerformance(true, 0) end
+						if trackPerf then
+							trackPerformance(true, 0)
+						end
 						return require(cache[resolvedTarget]) :: any
 					end)
 				elseif unambiguousStringToModuleCache[resolvedTarget] then
 					return profiledCall(microprofilerEnabled, PROFILER_LABELS.CACHE_HIT, function()
 						debugLog(debug, "Global cache hit for", resolvedTarget)
-						if trackPerf then trackPerformance(true, 0) end
+						if trackPerf then
+							trackPerformance(true, 0)
+						end
 						return require(unambiguousStringToModuleCache[resolvedTarget]) :: any
 					end)
 				end
@@ -559,7 +579,7 @@ local function CreateImportGenerator(_config: Config): ContextualImportGenerator
 					if targetRoot then
 						return profiledCall(microprofilerEnabled, PROFILER_LABELS.PATH_TRAVERSE, function()
 							local targetInstance = targetRoot
-							
+
 							-- Traverse the specified path
 							for i = 2, #pathParts do
 								local nextChild = targetInstance:FindFirstChild(pathParts[i])
@@ -574,35 +594,49 @@ local function CreateImportGenerator(_config: Config): ContextualImportGenerator
 											end
 										end
 									end
-									
+
 									if not nextChild then
-										error(`Module "{resolvedTarget}" not found: "{pathParts[i]}" does not exist in "{targetInstance:GetFullName()}".`)
+										error(
+											`Module "{resolvedTarget}" not found: "{pathParts[i]}" does not exist in "{targetInstance:GetFullName()}".`
+										)
 									end
 								end
 								targetInstance = nextChild :: Instance
 							end
-							
-							assert(targetInstance:IsA("ModuleScript"), `Target "{resolvedTarget}" is not a ModuleScript`)
-							
+
+							assert(
+								targetInstance:IsA("ModuleScript"),
+								`Target "{resolvedTarget}" is not a ModuleScript`
+							)
+
 							-- Circular dependency detection
 							if circularDetection and currentlyRequiring[targetInstance] then
-								error(`Circular dependency detected: {targetInstance:GetFullName()} is already being required`)
+								error(
+									`Circular dependency detected: {targetInstance:GetFullName()} is already being required`
+								)
 							end
-							
+
 							-- Cache the resolved module globally since it's unambiguous
 							unambiguousStringToModuleCache[resolvedTarget] = targetInstance :: ModuleScript
 							targetInstance.AncestryChanged:Once(function()
 								profiledCall(microprofilerEnabled, PROFILER_LABELS.CACHE_INVALIDATE, function()
-									debugLog(debug, "Clearing global cache for", resolvedTarget, "due to ancestry change")
+									debugLog(
+										debug,
+										"Clearing global cache for",
+										resolvedTarget,
+										"due to ancestry change"
+									)
 									unambiguousStringToModuleCache[resolvedTarget] = nil
 								end)
 							end)
-							
+
 							currentlyRequiring[targetInstance] = true
 							local result = require(targetInstance) :: any
 							currentlyRequiring[targetInstance] = nil
-							
-							if trackPerf then trackPerformance(false, tick() - startTime) end
+
+							if trackPerf then
+								trackPerformance(false, tick() - startTime)
+							end
 							return result
 						end)
 					end
@@ -611,9 +645,9 @@ local function CreateImportGenerator(_config: Config): ContextualImportGenerator
 					if not primaryRoot then
 						error(`Cannot resolve ambiguous path "{resolvedTarget}" - no valid ancestor found for context`)
 					end
-					
+
 					local found = searchForModule(root, pathParts[#pathParts], ancestorsArray, config)
-					
+
 					-- If not found locally, search other ancestor roots
 					if not found then
 						local ancestorsToSearch = table.clone(ancestorsArray)
@@ -629,7 +663,7 @@ local function CreateImportGenerator(_config: Config): ContextualImportGenerator
 						if circularDetection and currentlyRequiring[found] then
 							error(`Circular dependency detected: {found:GetFullName()} is already being required`)
 						end
-						
+
 						-- Cache the result for this context
 						cache[resolvedTarget] = found :: ModuleScript
 						found.AncestryChanged:Once(function()
@@ -638,12 +672,20 @@ local function CreateImportGenerator(_config: Config): ContextualImportGenerator
 								cache[resolvedTarget] = nil
 							end)
 						end)
-						
+
 						currentlyRequiring[found] = true
-						local result = require(found) :: any
+						local result = profiledCall(
+							microprofilerEnabled,
+							PROFILER_LABELS.MODULE_LOAD .. "_" .. found.Name,
+							function()
+								return require(found) :: any
+							end
+						)
 						currentlyRequiring[found] = nil
-						
-						if trackPerf then trackPerformance(false, tick() - startTime) end
+
+						if trackPerf then
+							trackPerformance(false, tick() - startTime)
+						end
 						return result
 					end
 
