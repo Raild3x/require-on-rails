@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 
 // Import extension modules for testing
-const { hideLines } = require('../src/hideLines');
+const { hideLines } = require('../../src/features/hideLines');
 
 // Import shared test utilities
 const {
@@ -12,7 +12,7 @@ const {
     createMockEditor,
     mockVSCodeMessages,
     setupTestWorkspace
-} = require('./testUtils');
+} = require('../utils/testUtils');
 
 suite('Line Hiding Tests', () => {
     vscode.window.showInformationMessage('Starting Line Hiding tests...');

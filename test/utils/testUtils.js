@@ -9,7 +9,7 @@ function createMockConfig(overrides = {}) {
         ignoreDirectories: ['^_.*'],
         supportedExtensions: ['.lua', '.luau'],
         enableAbsolutePathUpdates: true,
-        enableCollisionDetection: true,
+        enableFileNameCollisionResolution: false,
         enableBasenameUpdates: true,
         requirePrefix: '@',
         importModulePaths: ['ReplicatedStorage.src._Import'],

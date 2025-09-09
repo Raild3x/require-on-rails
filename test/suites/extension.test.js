@@ -4,8 +4,8 @@ const path = require('path');
 const fs = require('fs');
 
 // Import extension modules for testing
-const { generateFileAliases } = require('../src/updateLuaFileAliases');
-const { addImportToAllFiles, addImportToSingleFile } = require('../src/addImportToFiles');
+const { generateFileAliases } = require('../../src/features/updateLuaFileAliases');
+const { addImportToAllFiles, addImportToSingleFile, hasValidImportRequire } = require('../../src/features/addImportToFiles');
 
 // Import shared test utilities
 const {
@@ -13,7 +13,7 @@ const {
     createTestFiles,
     cleanupTestFiles,
     setupTestWorkspace
-} = require('./testUtils');
+} = require('../utils/testUtils');
 
 suite('Extension Integration Tests', () => {
     vscode.window.showInformationMessage('Starting Extension Integration tests...');
@@ -70,7 +70,7 @@ return {}`,
 local normalModule = require("./normalModule")
 return {}`,
                 'src/Server/FileWithImport.luau': `
-require = require("@rbxts/services")(script) :: typeof(require)
+require = require("@rbxts/services")(script)
 local something = require("@SomeModule")
 return {}`
             });
@@ -99,21 +99,10 @@ return {}`
             assert.ok(!requireWithAtPattern.test(contentWithoutAlias), 'FileWithoutAlias should not have custom alias usage');
             assert.ok(requireWithAtPattern.test(contentWithImport), 'FileWithImport should have custom alias usage');
             
-            // Check if files have import require definition
-            const hasImportPattern = (content, paths) => {
-                return paths.some(path => {
-                    // Handle both quoted and unquoted paths
-                    const quotedPath = path.startsWith('"') ? path : `"${path}"`;
-                    const unquotedPath = path.startsWith('"') ? path.slice(1, -1) : path;
-                    const defQuoted = `require = require(${quotedPath})(script) :: typeof(require)`;
-                    const defUnquoted = `require = require(${unquotedPath})(script) :: typeof(require)`;
-                    return content.includes(defQuoted) || content.includes(defUnquoted);
-                });
-            };
-            
-            assert.ok(!hasImportPattern(contentWithAlias, importModulePaths), 'FileWithAlias should not have import');
-            assert.ok(!hasImportPattern(contentWithoutAlias, importModulePaths), 'FileWithoutAlias should not have import');
-            assert.ok(hasImportPattern(contentWithImport, importModulePaths), 'FileWithImport should have import');
+            // Check if files have import require definition using the centralized function
+            assert.ok(!hasValidImportRequire(contentWithAlias, importModulePaths), 'FileWithAlias should not have import');
+            assert.ok(!hasValidImportRequire(contentWithoutAlias, importModulePaths), 'FileWithoutAlias should not have import');
+            assert.ok(hasValidImportRequire(contentWithImport, importModulePaths), 'FileWithImport should have import');
             
         } finally {
             restore();
@@ -162,9 +151,9 @@ return {}`
             // Read modified content
             const modifiedContent = fs.readFileSync(filePath, 'utf8');
             
-            // Verify import was added
-            const expectedImport = `require = require(${defaultImportModulePath})(script) :: typeof(require)`;
-            assert.ok(modifiedContent.includes(expectedImport), 'Modified file should contain import require definition');
+            // Verify import was added - check for base pattern since :: typeof(require) is optional
+            const expectedImportBase = `require = require(${defaultImportModulePath})(script)`;
+            assert.ok(modifiedContent.includes(expectedImportBase), 'Modified file should contain import require definition');
             
             // Verify it was placed after game:GetService as expected
             const lines = modifiedContent.split('\n');
@@ -175,7 +164,7 @@ return {}`
                 if (line.includes('game:GetService')) {
                     gameServiceLineIndex = index;
                 }
-                if (line.includes(expectedImport)) {
+                if (line.includes(expectedImportBase)) {
                     importLineIndex = index;
                 }
             });
@@ -215,10 +204,10 @@ return {}`
             
             const content = fs.readFileSync(filePath, 'utf8');
             const lines = content.split('\n');
-            const expectedImport = `require = require(${defaultImportModulePath})(script) :: typeof(require)`;
+            const expectedImportBase = `require = require(${defaultImportModulePath})(script)`;
             
             // Should be at the very beginning
-            assert.ok(lines[0].includes(expectedImport), 'Import should be at top of file');
+            assert.ok(lines[0].includes(expectedImportBase), 'Import should be at top of file');
             
         } finally {
             restore();
@@ -246,10 +235,10 @@ return {}`
             
             const content = fs.readFileSync(filePath, 'utf8');
             const expectedSeleneComment = '-- selene: allow(incorrect_standard_library_use)';
-            const expectedImport = `require = require(${defaultImportModulePath})(script) :: typeof(require)`;
+            const expectedImportBase = `require = require(${defaultImportModulePath})(script)`;
             
             assert.ok(!content.includes(expectedSeleneComment), 'Should not include selene comment by default');
-            assert.ok(content.includes(expectedImport), 'Should include import require definition');
+            assert.ok(content.includes(expectedImportBase), 'Should include import require definition');
             
         } finally {
             restore();
@@ -283,14 +272,14 @@ return {}`
             const content = fs.readFileSync(filePath, 'utf8');
             
             const expectedSeleneComment = '-- selene: allow(incorrect_standard_library_use)';
-            const expectedImport = `require = require(${defaultImportModulePath})(script) :: typeof(require)`;
+            const expectedImportBase = `require = require(${defaultImportModulePath})(script)`;
             
             assert.ok(content.includes(expectedSeleneComment), 'Should include selene comment when enabled');
-            assert.ok(content.includes(expectedImport), 'Should include import require definition');
+            assert.ok(content.includes(expectedImportBase), 'Should include import require definition');
             
             // Verify order: selene comment should come before import
             const seleneIndex = content.indexOf(expectedSeleneComment);
-            const importIndex = content.indexOf(expectedImport);
+            const importIndex = content.indexOf(expectedImportBase);
             assert.ok(seleneIndex < importIndex, 'Selene comment should come before import');
             
         } finally {
@@ -324,10 +313,10 @@ return {}`
             
             const content = fs.readFileSync(filePath, 'utf8');
             const expectedSeleneComment = '-- selene: allow(incorrect_standard_library_use)';
-            const expectedImport = `require = require(${defaultImportModulePath})(script) :: typeof(require)`;
+            const expectedImportBase = `require = require(${defaultImportModulePath})(script)`;
             
             assert.ok(!content.includes(expectedSeleneComment), 'Should not include selene comment when disabled');
-            assert.ok(content.includes(expectedImport), 'Should still include import require definition');
+            assert.ok(content.includes(expectedImportBase), 'Should still include import require definition');
             
         } finally {
             restore();
@@ -342,10 +331,10 @@ return {}`
         const restore = mockWorkspaceConfig(testWorkspaceUri);
 
         try {
-            // Create file that already has import
+            // Create file that already has import (base pattern without :: typeof(require))
             createTestFiles(testWorkspacePath, {
                 'src/Server/AlreadyHasImport.luau': `
-require = require("@rbxts/services")(script) :: typeof(require)
+require = require("@rbxts/services")(script)
 local something = require("@SomeModule")
 return {}`
             });
@@ -360,16 +349,13 @@ return {}`
             const hasCustomAliases = requireWithAtPattern.test(content);
             
             // Check if file already has import
-            const hasValidImportRequire = importModulePaths.some(path => {
-                const def = `require = require(${path})(script) :: typeof(require)`;
-                return content.includes(def);
-            });
+            const hasValidImport = hasValidImportRequire(content, importModulePaths);
             
             assert.ok(hasCustomAliases, 'File should have custom aliases');
-            assert.ok(hasValidImportRequire, 'File should already have import require definition');
+            assert.ok(hasValidImport, 'File should already have import require definition');
             
             // This file should NOT need import (has aliases but already has import)
-            const needsImport = hasCustomAliases && !hasValidImportRequire;
+            const needsImport = hasCustomAliases && !hasValidImport;
             assert.ok(!needsImport, 'File should not need import since it already has one');
             
         } finally {
@@ -398,13 +384,13 @@ return {}`
             
             const content = fs.readFileSync(filePath, 'utf8');
             const lines = content.split('\n');
-            const expectedImport = `require = require(${defaultImportModulePath})(script) :: typeof(require)`;
+            const expectedImportBase = `require = require(${defaultImportModulePath})(script)`;
             
             let importLineIndex = -1;
             let firstRequireLineIndex = -1;
             
             lines.forEach((line, index) => {
-                if (line.includes(expectedImport)) {
+                if (line.includes(expectedImportBase)) {
                     importLineIndex = index;
                 }
                 if (line.includes('require("@SomeModule")') && firstRequireLineIndex === -1) {

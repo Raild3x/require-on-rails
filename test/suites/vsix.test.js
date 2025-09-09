@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 
 // Import extension modules for testing
-const { generateFileAliases } = require('../src/updateLuaFileAliases');
+const { generateFileAliases } = require('../../src/features/updateLuaFileAliases');
 
 // Import shared test utilities
 const {
@@ -14,7 +14,7 @@ const {
     createTestFiles,
     cleanupTestFiles,
     setupTestWorkspace
-} = require('./testUtils');
+} = require('../utils/testUtils');
 
 //----------------------------------------------------------------------------------------
 
@@ -47,7 +47,7 @@ suite('VSIX Extension Integration Tests', () => {
 
     suite('VSIX Project Template Tests', () => {
         test('Should handle project template unpacking in VSIX environment', async () => {
-            const { unpackProjectTemplate } = require('../src/unpackProjectTemplate');
+            const { unpackProjectTemplate } = require('../../src/commands/unpackProjectTemplate');
             
             // Create a mock VSIX-like extension context
             const mockVSIXContext = {
@@ -125,7 +125,7 @@ suite('VSIX Extension Integration Tests', () => {
 
     suite('VSIX Extension Activation Tests', () => {
         test('Should handle extension activation in VSIX environment', () => {
-            const { activate } = require('../src/extension');
+            const { activate } = require('../../src/extension');
             
             // Create comprehensive VSIX context
             const mockVSIXContext = {
@@ -183,7 +183,7 @@ suite('VSIX Extension Integration Tests', () => {
         });
 
         test('Should handle file watchers in VSIX environment', async () => {
-            const { activate } = require('../src/extension');
+            const { activate } = require('../../src/extension');
             
             const mockVSIXContext = {
                 extensionUri: vscode.Uri.file(path.dirname(__dirname)),
@@ -236,7 +236,7 @@ suite('VSIX Extension Integration Tests', () => {
         });
 
         test('Should handle status bar updates in VSIX environment', () => {
-            const { activate } = require('../src/extension');
+            const { activate } = require('../../src/extension');
             
             let statusBarItem = null;
             const originalCreateStatusBarItem = vscode.window.createStatusBarItem;

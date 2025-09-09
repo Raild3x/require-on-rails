@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 
 // Import extension modules for testing
-const { generateFileAliases } = require('../src/updateLuaFileAliases');
+const { generateFileAliases } = require('../../src/features/updateLuaFileAliases');
 
 // Import shared test utilities
 const {
@@ -12,7 +12,7 @@ const {
     createTestFiles,
     cleanupTestFiles,
     setupTestWorkspace
-} = require('./testUtils');
+} = require('../utils/testUtils');
 
 suite('File Alias Generation Tests', () => {
     vscode.window.showInformationMessage('Starting File Alias Generation tests...');

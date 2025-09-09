@@ -4,8 +4,8 @@ const path = require('path');
 const fs = require('fs');
 
 // Import extension modules for testing
-const { generateFileAliases } = require('../src/updateLuaFileAliases');
-const { hideLines } = require('../src/hideLines');
+const { generateFileAliases } = require('../../src/features/updateLuaFileAliases');
+const { hideLines } = require('../../src/features/hideLines');
 
 // Import shared test utilities
 const {
@@ -13,7 +13,7 @@ const {
     mockWorkspaceConfig,
     mockVSCodeMessages,
     setupTestWorkspace
-} = require('./testUtils');
+} = require('../utils/testUtils');
 
 suite('Configuration Tests', () => {
     vscode.window.showInformationMessage('Starting Configuration tests...');

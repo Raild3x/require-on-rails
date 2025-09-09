@@ -2,7 +2,8 @@ const assert = require('assert');
 const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
-const { generateFileAliases } = require('../src/updateLuaFileAliases');
+// Import extension modules for testing
+const { generateFileAliases } = require('../../src/features/updateLuaFileAliases');
 
 // Import shared test utilities
 const {
@@ -10,7 +11,7 @@ const {
     mockWorkspaceConfig,
     createTestFiles,
     cleanupTestFiles
-} = require('./testUtils');
+} = require('../utils/testUtils');
 
 suite('Performance Tests', () => {
     let testWorkspacePath;

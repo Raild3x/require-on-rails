@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 
 // Import extension modules for testing
-const { updateRequireNames } = require('../src/updateRequireNames');
+const { updateRequireNames } = require('../../src/features/updateRequireNames');
 
 // Import shared test utilities
 const {
@@ -12,7 +12,7 @@ const {
     mockVSCodeMessages,
     cleanupTestFiles,
     setupTestWorkspace
-} = require('./testUtils');
+} = require('../utils/testUtils');
 
 suite('Require Statement Update Tests', () => {
     vscode.window.showInformationMessage('Starting Require Statement Update tests...');
@@ -93,7 +93,7 @@ suite('Require Statement Update Tests', () => {
     });
 
     test('Should verify move operation is detected correctly', () => {
-        const { analyzeFileOperation } = require('../src/updateRequireNames');
+        const { analyzeFileOperation } = require('../../src/features/updateRequireNames');
         
         const oldPath = path.join(testWorkspacePath, 'src/Server/TestFile.luau');
         const newPath = path.join(testWorkspacePath, 'src/Shared/TestFile.luau');
@@ -109,7 +109,7 @@ suite('Require Statement Update Tests', () => {
     });
 
     test('Should handle files with no extension change', () => {
-        const { analyzeFileOperation } = require('../src/updateRequireNames');
+        const { analyzeFileOperation } = require('../../src/features/updateRequireNames');
         
         const oldPath = path.join(testWorkspacePath, 'src/Server/Utils.luau');
         const newPath = path.join(testWorkspacePath, 'src/Shared/Utils.luau');
@@ -123,7 +123,7 @@ suite('Require Statement Update Tests', () => {
     });
 
     test('Should handle files with both directory and name change', () => {
-        const { analyzeFileOperation } = require('../src/updateRequireNames');
+        const { analyzeFileOperation } = require('../../src/features/updateRequireNames');
         
         const oldPath = path.join(testWorkspacePath, 'src/Server/OldUtils.luau');
         const newPath = path.join(testWorkspacePath, 'src/Shared/NewUtils.luau');
@@ -137,7 +137,7 @@ suite('Require Statement Update Tests', () => {
     });
 
     test('Should return null for identical paths', () => {
-        const { analyzeFileOperation } = require('../src/updateRequireNames');
+        const { analyzeFileOperation } = require('../../src/features/updateRequireNames');
         
         const samePath = path.join(testWorkspacePath, 'src/Server/Utils.luau');
         const operationInfo = analyzeFileOperation(samePath, samePath);
