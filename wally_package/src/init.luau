@@ -325,18 +325,21 @@ local function searchForModule(
 			searched[parent] = true
 
 			-- Check if this parent directly contains the target module
-			local module = parent:FindFirstChild(targetName)
-			if module and module:IsA("ModuleScript") then
-				local moduleName = normalizePath(module.Name, caseSensitive)
-				local searchName = normalizePath(targetName, caseSensitive)
-				if moduleName == searchName then
-					debugLog(debug, "Found ambiguous module:", module:GetFullName())
-					return module
+			-- Look specifically for ModuleScripts to avoid conflicts with folders or other instances of the same name
+			local children = parent:GetChildren()
+			for _, child in children do
+				if child:IsA("ModuleScript") then
+					local moduleName = normalizePath(child.Name, caseSensitive)
+					local searchName = normalizePath(targetName, caseSensitive)
+					if moduleName == searchName then
+						debugLog(debug, "Found ambiguous module:", child:GetFullName())
+						return child
+					end
 				end
 			end
 
 			-- Recursively search through valid child containers
-			for _, child in parent:GetChildren() do
+			for _, child in children do
 				if isValidContainer(child, config.IgnorePredicate) then
 					local found = searchDown(child, depth + 1)
 					if found then
