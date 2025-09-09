@@ -1,25 +1,18 @@
 const fs = require('fs');
 const path = require('path');
 const vscode = require('vscode');
-const { print, warn } = require('./logger');
-
-const supportedExtensions = ['.lua', '.luau'];
+const { print, warn } = require('../core/logger');
+const { getCommonConfig, scanDirectory, requireWorkspaceRoot } = require('../utils/workspaceUtils');
 
 /**
  * Main function to add import require definitions to files using custom aliases
  */
 function addImportToAllFiles() {
-    if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
-        vscode.window.showWarningMessage('RequireOnRails: Please open a folder first.');
-        return;
-    }
+    const workspaceRoot = requireWorkspaceRoot('import management');
+    if (!workspaceRoot) return;
 
-    const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
-    const config = vscode.workspace.getConfiguration('require-on-rails');
-    
-    const directoriesToScan = config.get('directoriesToScan') || [];
-    const ignoreDirectories = config.get('ignoreDirectories') || [];
-    const importModulePaths = config.get("importModulePaths");
+    const config = getCommonConfig();
+    const { directoriesToScan, ignoreDirectories, importModulePaths } = config;
     const pathsArray = Array.isArray(importModulePaths) ? importModulePaths : [importModulePaths];
     const defaultImportModulePath = pathsArray[0];
     
@@ -34,7 +27,11 @@ function addImportToAllFiles() {
     directoriesToScan.forEach(dir => {
         const dirPath = path.join(workspaceRoot, dir);
         if (fs.existsSync(dirPath) && fs.statSync(dirPath).isDirectory()) {
-            scanForFilesNeedingImport(dirPath, pathsArray, ignoreDirectories, filesToProcess);
+            scanDirectory(dirPath, config.supportedExtensions, ignoreDirectories, (filePath) => {
+                if (fileNeedsImport(filePath, importModulePaths)) {
+                    filesToProcess.push(filePath);
+                }
+            });
         }
     });
 
@@ -60,27 +57,25 @@ function addImportToAllFiles() {
  * Recursively scans directories for files that use custom aliases but lack import definition
  */
 function scanForFilesNeedingImport(dir, importModulePaths, ignoreDirectories, filesToProcess) {
-    try {
-        const files = fs.readdirSync(dir, { withFileTypes: true });
-        
-        for (const file of files) {
-            const fullPath = path.join(dir, file.name);
-            
-            if (file.isDirectory()) {
-                // Check if directory should be ignored
-                if (shouldIgnoreDirectory(path.basename(fullPath), ignoreDirectories)) {
-                    continue;
-                }
-                scanForFilesNeedingImport(fullPath, importModulePaths, ignoreDirectories, filesToProcess);
-            } else if (file.isFile() && supportedExtensions.includes(path.extname(file.name))) {
-                if (fileNeedsImport(fullPath, importModulePaths)) {
-                    filesToProcess.push(fullPath);
-                }
-            }
+    const config = getCommonConfig();
+    scanDirectory(dir, config.supportedExtensions, ignoreDirectories, (filePath) => {
+        if (fileNeedsImport(filePath, importModulePaths)) {
+            filesToProcess.push(filePath);
         }
-    } catch (error) {
-        warn(`Error scanning directory ${dir}:`, error.message);
-    }
+    });
+}
+
+/**
+ * Checks if a file has a valid import require definition
+ */
+function hasValidImportRequire(content, importModulePaths) {
+    const pathsArray = Array.isArray(importModulePaths) ? importModulePaths : [importModulePaths];
+    return pathsArray.some(path => {
+        // Match the pattern: require = require(somepath)(script)
+        // The :: typeof(require) part is optional
+        const def = `require = require(${path})(script)`;
+        return content.includes(def);
+    });
 }
 
 /**
@@ -98,13 +93,8 @@ function fileNeedsImport(filePath, importModulePaths) {
             return false;
         }
         
-        // Check if file already has any of the valid import require definitions
-        const hasValidImportRequire = importModulePaths.some(path => {
-            const def = `require = require(${path})(script) :: typeof(require)`;
-            return content.includes(def);
-        });
-        
-        return !hasValidImportRequire;
+        // Use the centralized function to check for valid import require definitions
+        return !hasValidImportRequire(content, importModulePaths);
     } catch (error) {
         warn(`Error reading file ${filePath}:`, error.message);
         return false;
@@ -115,14 +105,10 @@ function fileNeedsImport(filePath, importModulePaths) {
  * Helper function to check if directory should be ignored
  */
 function shouldIgnoreDirectory(dirName, ignorePatterns) {
-    return ignorePatterns.some(pattern => {
-        try {
-            return new RegExp(pattern).test(dirName);
-        } catch (e) {
-            warn(`Invalid regex pattern: ${pattern}, falling back to exact match`);
-            return dirName.toLowerCase() === pattern.toLowerCase();
-        }
-    });
+    // This is now handled by workspaceUtils.shouldIgnoreDirectory
+    // Keeping this function for backwards compatibility
+    const { shouldIgnoreDirectory: utilsShouldIgnore } = require('../utils/workspaceUtils');
+    return utilsShouldIgnore(dirName, ignorePatterns);
 }
 
 /**
@@ -150,8 +136,8 @@ function showFilesPreview(filesToProcess, defaultImportModulePath) {
  * Adds the import require definition to all specified files
  */
 function addImportToFiles(filesToProcess, defaultImportModulePath, workspaceRoot) {
-    const config = vscode.workspace.getConfiguration('require-on-rails');
-    const preferredImportPlacement = config.get("preferredImportPlacement");
+    const config = getCommonConfig();
+    const { preferredImportPlacement } = config;
     
     let successCount = 0;
     let errorCount = 0;
@@ -186,8 +172,8 @@ function addImportToSingleFile(filePath, defaultImportModulePath, preferredImpor
     const content = fs.readFileSync(filePath, 'utf8');
     const lines = content.split('\n');
     
-    const config = vscode.workspace.getConfiguration('require-on-rails');
-    const shouldAddSeleneComment = config.get("addSeleneCommentToImport", false);
+    const config = getCommonConfig();
+    const { addSeleneCommentToImport } = config;
     
     // Check if selene.toml exists in workspace
     const workspaceFolder = vscode.workspace.workspaceFolders[0];
@@ -195,7 +181,7 @@ function addImportToSingleFile(filePath, defaultImportModulePath, preferredImpor
         fs.existsSync(path.join(workspaceFolder.uri.fsPath, 'selene.toml'));
     
     const seleneComment = '-- selene: allow(incorrect_standard_library_use)';
-    const importRequire = `require = require(${defaultImportModulePath})(script) :: typeof(require)`;
+    const importRequire = `require = require(${defaultImportModulePath})(script)`;
     
     // Check if selene comment already exists
     const hasSeleneComment = lines.some(line => 
@@ -203,6 +189,8 @@ function addImportToSingleFile(filePath, defaultImportModulePath, preferredImpor
     );
     
     let insertLine = 0;
+
+    print("Pref Import:", preferredImportPlacement)
     
     // Determine insertion line based on preference
     switch (preferredImportPlacement) {
@@ -212,12 +200,24 @@ function addImportToSingleFile(filePath, defaultImportModulePath, preferredImpor
             
         case "BeforeFirstRequire":
             // Look for existing 'require(' on global scope
+            let foundRequire = false;
             for (let i = 0; i < lines.length; i++) {
                 const line = lines[i].trim();
-                if (line.startsWith('require(') || /^[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*require\(/.test(line)) {
+                // Match various require patterns:
+                // - require(...)
+                // - variable = require(...)
+                // - local variable = require(...)
+                if (line.startsWith('require(') || 
+                    /^(local\s+)?[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*require\(/.test(line) ||
+                    /require\s*\(/.test(line)) {
                     insertLine = i;
+                    foundRequire = true;
                     break;
                 }
+            }
+            // If no require statement found, default to top of file
+            if (!foundRequire) {
+                insertLine = 0;
             }
             break;
             
@@ -245,7 +245,7 @@ function addImportToSingleFile(filePath, defaultImportModulePath, preferredImpor
     
     // Prepare the text to insert
     let textToInsert = '';
-    if (shouldAddSeleneComment && hasSeleneConfig && !hasSeleneComment) {
+    if (addSeleneCommentToImport && hasSeleneConfig && !hasSeleneComment) {
         textToInsert += seleneComment + '\n';
     }
     textToInsert += importRequire + '\n';
@@ -259,4 +259,4 @@ function addImportToSingleFile(filePath, defaultImportModulePath, preferredImpor
     return true;
 }
 
-module.exports = { addImportToAllFiles, addImportToSingleFile };
+module.exports = { addImportToAllFiles, addImportToSingleFile, hasValidImportRequire };

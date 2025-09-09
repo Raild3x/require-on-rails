@@ -1,7 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 const vscode = require('vscode');
-const { print, warn, error } = require('./logger');
+const { print, warn, error } = require('../core/logger');
+const { requireWorkspaceRoot, getCommonConfig } = require('../utils/workspaceUtils');
 
 const extenionName = 'require-on-rails';
 const supportedExtensions = ['.lua', '.luau'];

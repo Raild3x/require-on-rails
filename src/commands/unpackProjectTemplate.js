@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const vscode = require('vscode');
-const { print, warn, error } = require('./logger');
+const { print, warn, error } = require('../core/logger');
 
 /**
  * Unpacks the project template into the workspace directory.

@@ -9,13 +9,17 @@
  */
 
 const readline = require('readline');
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
 const { publishWally } = require('./wallyPublish');
 
 const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout
 });
+
+const packageJsonPath = path.join(__dirname, '..', 'package.json');
 
 /**
  * Prompts the user with a question and returns their response
@@ -55,6 +59,52 @@ function runCommand(command, args, options = {}) {
 }
 
 /**
+ * Gets the current package version from package.json
+ * @returns {string} The package version
+ */
+function getPackageVersion() {
+    const content = fs.readFileSync(packageJsonPath, 'utf8');
+    const packageData = JSON.parse(content);
+    return packageData.version;
+}
+
+/**
+ * Publishes the package to the chosen platform
+ * @returns {Promise<void>}
+ */
+async function publish() {
+    try {
+        const version = getPackageVersion();
+        
+        console.log('RequireOnRails Publish Process');
+        console.log('==============================');
+        console.log(`Publishing version: ${version}`);
+        
+        // Check if VSIX file exists
+        const vsixFile = `require-on-rails-${version}.vsix`;
+        const vsixPath = path.join(__dirname, '..', vsixFile);
+        
+        if (!fs.existsSync(vsixPath)) {
+            console.log(`✗ VSIX file not found: ${vsixFile}`);
+            console.log('Run "npm run build" first to create the package.');
+            process.exit(1);
+        }
+        
+        console.log(`Found VSIX file: ${vsixFile}`);
+        
+        // Publish to marketplace
+        console.log('\nPublishing to VS Code Marketplace...');
+        execSync(`npx vsce publish`, { stdio: 'inherit', cwd: path.join(__dirname, '..') });
+        
+        console.log(`\n✓ Successfully published version ${version} to VS Code Marketplace!`);
+        
+    } catch (error) {
+        console.error('\n✗ Publish failed:', error.message);
+        process.exit(1);
+    }
+}
+
+/**
  * Main function that handles the publishing workflow
  * Presents user with publishing options and executes the chosen action
  * @returns {Promise<void>}
@@ -75,9 +125,7 @@ async function main() {
         switch (choice.trim()) {
             case '1':
                 console.log('🚀 Publishing to VSCode Marketplace...');
-                console.error('VSCode Marketplace publishing is currently disabled. Please use Wally instead.');
-                // await runCommand('npm', ['run', 'vsce', 'publish']);
-                // console.log('✅ Successfully published to VSCode Marketplace!');
+                await publish();
                 break;
                 
             case '2':
@@ -99,3 +147,9 @@ async function main() {
 }
 
 main();
+// // Run the publish if this script is executed directly
+// if (require.main === module) {
+//     publish();
+// } else {
+//     main();
+// }

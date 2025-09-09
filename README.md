@@ -19,6 +19,9 @@ local MyModule = require(script.Parent.Parent.Shared.Utils.MyModule)
 local MyModule = require("@MyModule")
 ```
 
+<details>
+<summary>More Features:</summary>
+
 ### Import Line Management
 The extension automatically hides or reduces the opacity of boilerplate import lines in your Luau files, keeping your editor clean while maintaining functionality.
 
@@ -32,12 +35,20 @@ The extension automatically hides or reduces the opacity of boilerplate import l
 - Automatically detects file renames and moves
 - Prompts to update basename require statements when files are renamed
 - Handles absolute path updates when files are moved between alias directories
-- Collision detection with automatic duplicate file renaming
+- Configurable collision detection with automatic duplicate file renaming
+
+### Import Management Enhancements
+- Automatic import require definition detection and insertion
+- Multiple placement options for import statements (top of file, before first require, after services)
+- Optional Selene comment support for import lines
+- Centralized import validation logic
 
 ### Status Bar Integration
 Toggle the extension on/off with a convenient status bar button showing the current state.
 
 ![Status Button Image](images/ReadMe/StatusButtonImage.jpeg)
+
+</details>
 
 ## Requirements
 - Visual Studio Code
@@ -112,8 +123,6 @@ Adjust these key settings to match your project structure in your VS Code settin
         "game:GetService(\"ReplicatedStorage\").src.Import", // Potential alternate path
         "game.ReplicatedStorage.src.Import" // Potential alternate path
     ],
-
-
 }
 ```
 
@@ -123,17 +132,63 @@ Ensure your project follows a structure where:
 - Directory structure matches your `.vscode/settings.json` configuration
 - Import system is properly configured
 
-### 2. Import System Setup
+### 3. Import System Setup
 1. Get the RequireOnRails Luau module via Wally or the `downloadLuauModule` command.
-2. Create an ImportGenerator by following the instructions in the module.
+2. Create an `Import.luau` module by following the instructions in the module. (Example below)
 3. Ensure your `importModulePaths` configuration points to your newly setup `Import` module
 4. Add the require override line to your files:
-   ```lua
-   -- This line may vary depending on your `importModulePaths` configuration
-   require = require(ReplicatedStorage.src.Import)(script) :: typeof(require)
-   ```
+   
+```lua
+-- This line may vary depending on your `importModulePaths` configuration
+require = require(ReplicatedStorage.src.Import)(script)
+```
+<details>
+<summary>`Import.luau` Module Example</summary>
 
+```lua
+--// Services //--
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
+local RequireOnRails = require(ReplicatedStorage.src.Packages.RequireOnRails)
+local ImportGenerator: RequireOnRails.ContextualImportGenerator
+
+------------------------------
+
+-- Defines whether or not an instance should be ignored by the import generator.
+local ignorePredicate = function(instance: Instance): boolean
+	local isDescendantOfPackageIndexFolder = instance:IsDescendantOf(ReplicatedStorage.src.Packages._Index)
+	local shouldIgnoreFile = isDescendantOfPackageIndexFolder
+	return shouldIgnoreFile
+end
+
+------------------------------
+
+if RunService:IsClient() then
+	ImportGenerator = RequireOnRails.create {
+		Ancestors = {
+			["Client"] = ReplicatedStorage.src.Client,
+			["Shared"] = ReplicatedStorage.src.Shared,
+			["Packages"] = ReplicatedStorage.src.Packages,
+		},
+		IgnorePredicate = ignorePredicate,
+	}
+else
+	local ServerScriptService = game:GetService("ServerScriptService")
+	ImportGenerator = RequireOnRails.create {
+		Ancestors = {
+			["Server"] = ServerScriptService.src.Server,
+			["Shared"] = ReplicatedStorage.src.Shared,
+			["Packages"] = ReplicatedStorage.src.Packages,
+			["ServerPackages"] = ServerScriptService.src.ServerPackages,
+		},
+		IgnorePredicate = ignorePredicate,
+	}
+end
+
+return ImportGenerator
+```
+</details>
 
 ## Usage
 
@@ -153,8 +208,9 @@ Ensure your project follows a structure where:
 
 ⚠️ **Configuration Required**: You must configure `directoriesToScan` and `importModulePaths` to match your specific project structure.
 
-⚠️ **RequireOnRails Module**: This extension requires a separate Luau module to function. The module is availible via Wally.
+⚠️ **RequireOnRails Module**: This extension requires a separate Luau module to function. The module is available via Wally.
 
+⚠️ **Import override**: Properly override the require in each script. ex: `require = require(path.to.Import)(script)`. *(Do not localize! Doing so will break LuauLSP)*
 
 ## Extension Settings and Commands
 <details>
@@ -192,7 +248,7 @@ This extension contributes the following settings through `require-on-rails.*`:
   - **Default**: `0.45`
   - **Description**: Opacity level (0.0-1.0) for import require override lines in the editor. Lower values make lines more transparent
 
-* `preferredImportPlacement`: 
+* `require-on-rails.preferredImportPlacement`: 
   - **Type**: `string`
   - **Default**: `"TopOfFile"`
   - **Enum**: `["TopOfFile", "BeforeFirstRequire", "AfterDefiningRobloxServices"]`
@@ -201,7 +257,12 @@ This extension contributes the following settings through `require-on-rails.*`:
     - `BeforeFirstRequire`: Place import before the first require statement  
     - `AfterDefiningRobloxServices`: Place import after Roblox service definitions (game:GetService calls)
 
-### Require Statement Updates
+* `require-on-rails.addSeleneCommentToImport`: 
+  - **Type**: `boolean`
+  - **Default**: `false`
+  - **Description**: Whether to add a Selene comment to disable warnings for the import require definition line
+
+### File Operation Settings
 
 * `require-on-rails.enableBasenameUpdates`: 
   - **Type**: `boolean`
@@ -213,9 +274,9 @@ This extension contributes the following settings through `require-on-rails.*`:
   - **Default**: `false`
   - **Description**: Whether to prompt for updating absolute require paths when files are moved between different alias directories
 
-* `require-on-rails.enableCollisionDetection`: 
+* `require-on-rails.enableFileNameCollisionResolution`: 
   - **Type**: `boolean`
-  - **Default**: `true`
+  - **Default**: `false`
   - **Description**: Whether to detect and handle filename collisions by automatically renaming files with '_Duplicate' suffix
 
 ### Directory Configuration
@@ -233,24 +294,8 @@ This extension contributes the following settings through `require-on-rails.*`:
 
 * `require-on-rails.manualAliases`: 
   - **Type**: `object`
-  - **Default**: `{"@Server": "src/Server", "@Client": "src/Client", "@Shared": "src/Shared"}`
+  - **Default**: `{"Server": "src/Server", "Client": "src/Client", "Shared": "src/Shared"}`
   - **Description**: Manual aliases for absolute path support. Maps alias names to their corresponding directory paths (relative to workspace root). Used for absolute require path updates when files are moved between different alias directories.
-
-### Advanced Settings
-<details>
-<summary>Avoid messing with these properties.</summary>
-
-* `require-on-rails.supportedExtensions`: 
-  - **Type**: `array<string>`
-  - **Default**: `[".lua", ".luau"]`
-  - **Description**: File extensions to consider when generating aliases and updating require statements
-
-* `require-on-rails.requirePrefix`: 
-  - **Type**: `string`
-  - **Default**: `"@"`
-  - **Description**: The prefix character used in require statements
-
-</details>
 
 ## Commands
 
@@ -259,6 +304,9 @@ RequireOnRails provides the following commands accessible via Command Palette (`
 * **Toggle RoR Active**: Enable or disable RequireOnRails functionality
 * **Setup Default Project Structure**: Setup a project structure ready out of the box for RequireOnRails
 * **Download Luau Module**: Download the RequireOnRails Luau module via Wally package manager or as a raw Luau file
+* **Add Import require def to all Luau files**: Automatically add import require definitions to all files that need them
+* **Regenerate Aliases (Debug)**: Force regeneration of all aliases (useful for troubleshooting)
+
 </details>
 
 ## Troubleshooting
@@ -279,13 +327,13 @@ RequireOnRails provides the following commands accessible via Command Palette (`
 - Check that the relevant enable settings are turned on (`enableBasenameUpdates`, etc.)
 - Verify the extension is activated and monitoring file changes
 - Ensure file basenames are unique across all scanned directories
-- Verify RequireOnRails is activated (check status bar)
 
-**Q: Import require prompts not working**
-- Verify `importModulePaths` points to your actual import module location
-- Check that files contain `require("@SomeName")` statements
-- Ensure `tryToAddImportRequire` is enabled in settings
+**Q: Import statements not being added correctly**
+- Check your `preferredImportPlacement` setting
+- Verify that the import module path in `importModulePaths` is correct
+- Ensure the target files contain `@` require statements
 
-**Q: File rename updates not working**
-- Check that the relevant enable settings are turned on (`enableBasenameUpdates`, etc.)
-- Verify the extension is activated and monitoring file changes
+**Q: Selene comments not appearing**
+- Make sure `addSeleneCommentToImport` is set to `true`
+- Verify that a `selene.toml` file exists in your workspace root
+- Check that the import statement is being added successfully first

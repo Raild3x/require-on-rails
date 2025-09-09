@@ -1,8 +1,8 @@
 const vscode = require('vscode');
 const path = require('path');
 const fs = require('fs');
-const { print } = require('./logger');
-const { addImportToSingleFile } = require('./addImportToFiles');
+const { print } = require('../core/logger');
+const { addImportToSingleFile, hasValidImportRequire } = require('./addImportToFiles');
 
 // Store decoration types globally to properly dispose of them
 let currentDecorationType = null;
@@ -31,10 +31,7 @@ function hideLines(editor) {
     // Clear any existing decorations first
     unhideLines(editor);
 
-    if (currentEditorDocument && currentEditorDocument === editor.document) {
-        return; // If the document hasn't changed, no need to reprocess
-    }
-    currentEditorDocument = editor.document; // Update current document reference
+
 
     const config = vscode.workspace.getConfiguration('require-on-rails');
     const importModulePaths = config.get("importModulePaths");
@@ -42,11 +39,8 @@ function hideLines(editor) {
     const defaultImportModulePath = pathsArray[0];
     const tryToAddImportRequire = config.get("tryToAddImportRequire");
 
-    // Look for any of the valid import require definitions
-    const hasValidImportRequire = pathsArray.some(path => {
-        const def = `require = require(${path})(script) :: typeof(require)`;
-        return text.includes(def);
-    });
+    // Use the centralized function to check for valid import require definitions
+    const hasValidImport = hasValidImportRequire(text, importModulePaths);
 
     // Check if the file contains require statements with '@' symbol
     const requireWithAtPattern = /require\s*\(\s*["']([^"']*@[^"']*)["']\s*\)/;
@@ -56,7 +50,13 @@ function hideLines(editor) {
     // 1. tryToAddImportRequire is enabled
     // 2. There's no valid import require definition present
     // 3. There's at least one require statement with '@' symbol
-    if (tryToAddImportRequire && !hasValidImportRequire && hasRequireWithAtSymbol) {
+    if (tryToAddImportRequire && !hasValidImport && hasRequireWithAtSymbol) {
+        if (currentEditorDocument && currentEditorDocument == editor.document.fileName) {
+            print(`No changes detected in ${editor.document.fileName}, skipping reprocessing.`);
+            return; // If the document hasn't changed, no need to reprocess
+        }
+        currentEditorDocument = editor.document.fileName; // Update current document reference
+
         // Prompt the user for if they want to add the import require definition
         vscode.window.showWarningMessage(
             `This file is missing the import require definition. Would you like to add it?`,
@@ -88,7 +88,7 @@ function hideLines(editor) {
     const linesToHide = [];
     // Build regex dynamically based on all importModulePaths, escaping special characters
     const pathPatterns = pathsArray.map(path => 
-        escapeRegExp(`require = require(${path})(script) :: typeof(require)`)
+        escapeRegExp(`require = require(${path})(script)`)
     ).join('|');
     const regex = new RegExp(
         `-- selene: allow\\(incorrect_standard_library_use\\)|${pathPatterns}`

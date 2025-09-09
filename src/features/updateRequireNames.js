@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const vscode = require('vscode');
-const { print, warn } = require('./logger');
+const { print, warn } = require('../core/logger');
 
 const requirePrefix = '@';
 const supportedExtensions = ['.lua', '.luau'];
@@ -58,7 +58,7 @@ function updateRequireNames(newFilePath, oldFilePath) {
     }
 
     // Handle filename collision detection and resolution
-    if (config.get('enableCollisionDetection', true)) {
+    if (config.get('enableFileNameCollisionResolution', true)) {
         const collisionResult = handleFilenameCollision(newFilePath, newFileBasename, workspaceRoot);
         if (collisionResult.renamed) {
             newFilePath = collisionResult.newFilePath;

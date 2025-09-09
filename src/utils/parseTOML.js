@@ -1,4 +1,4 @@
-const { warn, error } = require('./logger');
+const { warn, error } = require('../core/logger');
 
 /* EXAMPLE USAGE
 const { parse, stringify } = require('./parseTOML');

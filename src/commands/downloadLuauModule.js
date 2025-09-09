@@ -2,17 +2,32 @@ const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
 const { exec } = require('child_process');
-
-const packageAuthor = 'raild3x';
-const wallyPackageName = 'requireonrails';
-const moduleAccessName = 'RequireOnRails';
+const { print, warn, error } = require('../core/logger');
+const { PACKAGE_AUTHOR, PACKAGE_NAME, MODULE_ACCESS_NAME, FALLBACK_VERSION } = require('../core/constants');
+const { getVersionFromWallyToml, hasWorkspaceFolders, getWorkspaceRoot } = require('../utils/wallyUtils');
 
 async function getLatestVersion() {
     return new Promise((resolve, reject) => {
-        exec(`wally search ${wallyPackageName}`, (error, stdout, stderr) => {
+        exec(`wally search ${PACKAGE_NAME}`, (error, stdout, stderr) => {
             if (error) {
-                console.warn('Failed to fetch latest version from wally, using fallback version:', error.message);
-                resolve('^1.0.0'); // Fallback version
+                warn('Failed to fetch latest version from wally, trying fallback to local wally.toml:', error.message);
+                
+                // Try fallback to local wally.toml
+                if (hasWorkspaceFolders()) {
+                    const workspaceRoot = getWorkspaceRoot();
+                    const fallbackVersion = getVersionFromWallyToml(workspaceRoot, {
+                        addCaretPrefix: true,
+                        logContext: 'wally search fallback'
+                    });
+                    if (fallbackVersion) {
+                        resolve(fallbackVersion);
+                        return;
+                    }
+                }
+                
+                // Final fallback version
+                warn('Using hardcoded fallback version');
+                resolve(FALLBACK_VERSION);
                 return;
             }
 
@@ -20,22 +35,51 @@ async function getLatestVersion() {
                 // Parse wally search output to find the latest version
                 const lines = stdout.split('\n');
                 for (const line of lines) {
-                    if (line.includes(`${packageAuthor}/${wallyPackageName}`)) {
+                    if (line.includes(`${PACKAGE_AUTHOR}/${PACKAGE_NAME}`)) {
                         // Extract version from line like: "raild3x/requireonrails@1.2.3 - Description"
                         const versionMatch = line.match(/@(\d+\.\d+\.\d+)/);
                         if (versionMatch) {
+                            print('Found version from wally search:', versionMatch[1]);
                             resolve(`^${versionMatch[1]}`);
                             return;
                         }
                     }
                 }
                 
-                // If we can't parse the version, use fallback
-                console.warn('Could not parse version from wally search output');
-                resolve('^1.0.0');
+                // If we can't parse the version from wally search, try fallback
+                warn('Could not parse version from wally search output, trying fallback');
+                
+                if (hasWorkspaceFolders()) {
+                    const workspaceRoot = getWorkspaceRoot();
+                    const fallbackVersion = getVersionFromWallyToml(workspaceRoot, {
+                        addCaretPrefix: true,
+                        logContext: 'wally parse fallback'
+                    });
+                    if (fallbackVersion) {
+                        resolve(fallbackVersion);
+                        return;
+                    }
+                }
+                
+                // Final fallback
+                resolve(FALLBACK_VERSION);
             } catch (parseError) {
-                console.warn('Error parsing wally search output:', parseError.message);
-                resolve('^1.0.0');
+                warn('Error parsing wally search output:', parseError.message);
+                
+                // Try fallback before giving up
+                if (hasWorkspaceFolders()) {
+                    const workspaceRoot = getWorkspaceRoot();
+                    const fallbackVersion = getVersionFromWallyToml(workspaceRoot, {
+                        addCaretPrefix: true,
+                        logContext: 'parse error fallback'
+                    });
+                    if (fallbackVersion) {
+                        resolve(fallbackVersion);
+                        return;
+                    }
+                }
+                
+                resolve(FALLBACK_VERSION);
             }
         });
     });
@@ -43,12 +87,12 @@ async function getLatestVersion() {
 
 async function downloadLuauModule(context) {
     // Check if workspace is available
-    if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
+    if (!hasWorkspaceFolders()) {
         vscode.window.showErrorMessage(`RequireOnRails: Please open a workspace folder first.`);
         return;
     }
 
-    const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
+    const workspaceRoot = getWorkspaceRoot();
 
     // Ask user for installation method
     const installMethod = await vscode.window.showQuickPick([
@@ -101,12 +145,12 @@ async function installViaWally(workspaceRoot) {
         let wallyContent = fs.readFileSync(wallyTomlPath, 'utf8');
 
         // Check if RequireOnRails is already in dependencies
-        if (wallyContent.includes(wallyPackageName)) {
+        if (wallyContent.includes(PACKAGE_NAME)) {
             vscode.window.showInformationMessage(`RequireOnRails: Already exists in wally.toml dependencies.`);
         } else {
             // Add RequireOnRails to dependencies
             const latestVersion = await getLatestVersion();
-            const dependencyLine = `${moduleAccessName} = "${packageAuthor}/${wallyPackageName}@${latestVersion}"`;
+            const dependencyLine = `${MODULE_ACCESS_NAME} = "${PACKAGE_AUTHOR}/${PACKAGE_NAME}@${latestVersion}"`;
 
             if (wallyContent.includes('[dependencies]')) {
                 // Add to existing dependencies section
@@ -149,7 +193,7 @@ registry = "https://github.com/UpliftGames/wally-index"
 realm = "shared"
 
 [dependencies]
-${moduleAccessName} = "${packageAuthor}/${wallyPackageName}@${latestVersion}"
+${MODULE_ACCESS_NAME} = "${PACKAGE_AUTHOR}/${PACKAGE_NAME}@${latestVersion}"
 `;
 
     fs.writeFileSync(wallyTomlPath, wallyTemplate);
