@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 
 // Import extension modules for testing
-const { hideLines } = require('../../src/features/hideLines');
+const { hideLines } = require('../../../src/features/hideLines');
 
 // Import shared test utilities
 const {

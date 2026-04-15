@@ -3,7 +3,7 @@ const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
 // Import extension modules for testing
-const { generateFileAliases } = require('../../src/features/updateLuaFileAliases');
+const { generateFileAliases } = require('../../../src/features/updateLuaFileAliases');
 
 // Import shared test utilities
 const {

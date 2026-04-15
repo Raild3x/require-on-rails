@@ -4,8 +4,8 @@ const path = require('path');
 const fs = require('fs');
 
 // Import extension modules for testing
-const { generateFileAliases } = require('../../src/features/updateLuaFileAliases');
-const { addImportToAllFiles, addImportToSingleFile, hasValidImportRequire } = require('../../src/features/addImportToFiles');
+const { generateFileAliases } = require('../../../src/features/updateLuaFileAliases');
+const { addImportToAllFiles, addImportToSingleFile, hasValidImportRequire } = require('../../../src/features/addImportToFiles');
 
 // Import shared test utilities
 const {

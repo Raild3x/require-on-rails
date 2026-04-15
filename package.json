@@ -162,8 +162,8 @@
     }
   },
   "scripts": {
-    "test": "node ./test/runners/runTest.js",
-    "test:fast": "node ./test/runners/runFastTest.js",
+    "test": "node ./test/vs-code-extension/runners/runTest.js",
+    "test:fast": "node ./test/vs-code-extension/runners/runFastTest.js",
     "pretest": "npm run compile",
     "compile": "echo TS conversion disabled",
     "vscode:prepublish": "npm run compile",
