@@ -1,0 +1,17 @@
+{
+    "name": "Roblox_Project",
+    "globIgnorePaths": [],
+    "emitLegacyScripts": false,
+    "tree": {
+        "$className": "DataModel",
+        "Workspace": {
+            "$className": "Workspace",
+            "src": {
+                "$path": "test/wally-package",
+                "RequireOnRails": {
+                    "$path": "wally_package"
+                }
+            }
+        }
+    }
+}
