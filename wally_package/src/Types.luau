@@ -12,7 +12,6 @@ export type Config = {
 	MaxSearchDepth: number?,
 	CaseSensitive: boolean?,
 	CircularDependencyDetection: boolean?,
-	MicroprofilerEnabled: boolean?,
 }
 
 return {}

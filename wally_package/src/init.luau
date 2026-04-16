@@ -5,7 +5,7 @@
 
 	Provides contextual `require` with string path resolution relative to
 	configured ancestor instances.  Supports absolute paths
-	(`@AncestorKey/path/to/Module`), ambiguous single-name paths (`@ModuleName`),
+	(`@AncestorKey/path/to/Module`), non-ambiguous single-name paths (`@ModuleName`),
 	and direct Instance references.
 
 	Intended for use with the RequireOnRails VSCode extension, which generates
@@ -36,9 +36,8 @@
 	```
 ]=]
 
-local Types   = require(script.Types)
-local Profiler = require(script.Profiler)
-local Search  = require(script.Search)
+local Types  = require(script.Types)
+local Search = require(script.Search)
 
 -- Re-export public types
 export type Config                    = Types.Config
@@ -47,8 +46,6 @@ export type ContextualImportGenerator = (Instance) -> typeof(require)
 type ModuleCache  = Types.ModuleCache
 type ContextCache = Types.ContextCache
 
-local call   = Profiler.call
-local LABELS = Profiler.LABELS
 
 --[=[
 	Prints debug information to the output when `enabled` is true.
@@ -62,21 +59,18 @@ end
 	For example: if `Aliases = { Svc = "Server/Services" }` then
 	`@Svc/Foo` resolves to `@Server/Services/Foo`.
 
-	@param path                 -- The original `@`-prefixed path
-	@param aliases              -- Optional alias map from Config
-	@param microprofilerEnabled -- Whether to profile this operation
-	@return string              -- Resolved path (unchanged if no alias matches)
+	@param path    -- The original `@`-prefixed path
+	@param aliases -- Optional alias map from Config
+	@return string -- Resolved path (unchanged if no alias matches)
 ]=]
-local function resolveAlias(path: string, aliases: { [string]: string }?, microprofilerEnabled: boolean?): string
-	return call(microprofilerEnabled or false, LABELS.ALIAS_RESOLVE, function()
-		if not aliases then return path end
-		local pathWithoutPrefix = path:sub(2)
-		local firstSegment = pathWithoutPrefix:split("/")[1]
-		if aliases[firstSegment] then
-			return "@" .. aliases[firstSegment] .. pathWithoutPrefix:sub(#firstSegment + 1)
-		end
-		return path
-	end)
+local function resolveAlias(path: string, aliases: { [string]: string }?): string
+	if not aliases then return path end
+	local pathWithoutPrefix = path:sub(2)
+	local firstSegment = pathWithoutPrefix:split("/")[1]
+	if aliases[firstSegment] then
+		return "@" .. aliases[firstSegment] .. pathWithoutPrefix:sub(#firstSegment + 1)
+	end
+	return path
 end
 
 ---------------------------------------------------------------------------------------
@@ -97,7 +91,6 @@ local function CreateImportGenerator(_config: Config): ContextualImportGenerator
 	local ancestorsArray: { Instance } = {}
 	local debug          = config.Debug or false
 	local circularDetect = config.CircularDependencyDetection ~= false
-	local microprofiler  = config.MicroprofilerEnabled or false
 
 	assert(typeof(validAncestors) == "table", "Ancestors must be a table")
 	for _, ancestor in validAncestors do
@@ -134,10 +127,8 @@ local function CreateImportGenerator(_config: Config): ContextualImportGenerator
 		local newCache: ModuleCache = {}
 		contextCache[context] = newCache
 		context.AncestryChanged:Connect(function()
-			call(microprofiler, LABELS.CACHE_INVALIDATE, function()
-				debugLog(debug, "Cache cleared for", context.Name)
-				for k in newCache do newCache[k] = nil end
-			end)
+			debugLog(debug, "Cache cleared for", context.Name)
+			for k in newCache do newCache[k] = nil end
 		end)
 		return newCache
 	end
@@ -180,109 +171,96 @@ local function CreateImportGenerator(_config: Config): ContextualImportGenerator
 			Results are cached per-context (ambiguous) or globally (absolute).
 		]=]
 		local function Require(target: string | Instance): any
-			return call(microprofiler, LABELS.REQUIRE, function()
-				-- Direct Instance reference
-				if typeof(target) == "Instance" then
-					assert(target:IsA("ModuleScript"), "Target must be a ModuleScript instance")
-					return requireModule(target)
-				end
+			-- Direct Instance reference
+			if typeof(target) == "Instance" then
+				assert(target:IsA("ModuleScript"), "Target must be a ModuleScript instance")
+				return requireModule(target)
+			end
 
-				assert(typeof(target) == "string", "Target must be a string or Instance")
+			assert(typeof(target) == "string", "Target must be a string or Instance")
 
-				-- Non-RoR strings fall through to native require
-				if not target:match("^@") or target:match("^@self/") then
-					return require(target) :: any
-				end
+			-- Non-RoR strings fall through to native require
+			if not target:match("^@") or target:match("^@self/") then
+				return require(target) :: any
+			end
 
-				local resolvedTarget = resolveAlias(target, config.Aliases, microprofiler)
-				debugLog(debug, "Resolving:", target, "->", resolvedTarget)
+			local resolvedTarget = resolveAlias(target, config.Aliases)
+			debugLog(debug, "Resolving:", target, "->", resolvedTarget)
 
-				-- Context-local cache
-				if cache[resolvedTarget] then
-					return call(microprofiler, LABELS.CACHE_HIT, function()
-						return requireModule(cache[resolvedTarget])
-					end)
-				end
+			-- Context-local cache hit
+			if cache[resolvedTarget] then
+				return requireModule(cache[resolvedTarget])
+			end
 
-				-- Global unambiguous cache
-				if unambiguousCache[resolvedTarget] then
-					return call(microprofiler, LABELS.CACHE_HIT, function()
-						return requireModule(unambiguousCache[resolvedTarget])
-					end)
-				end
+			-- Global unambiguous cache hit
+			if unambiguousCache[resolvedTarget] then
+				return requireModule(unambiguousCache[resolvedTarget])
+			end
 
-				return call(microprofiler, LABELS.CACHE_MISS, function()
-					local pathParts = string.split(resolvedTarget:sub(2), "/")
+			local pathParts = string.split(resolvedTarget:sub(2), "/")
 
-					-- ── Absolute path: @AncestorKey/path/to/Module ──────────────
-					local targetRoot = validAncestors[pathParts[1]]
+			-- ── Absolute path: @AncestorKey/path/to/Module ──────────────
+			local targetRoot = validAncestors[pathParts[1]]
 
-					if not targetRoot and #pathParts > 1 then
-						local keys = {}
-						for k in validAncestors do table.insert(keys, k) end
-						error(`Unknown ancestor key "{pathParts[1]}" in "{resolvedTarget}". Valid keys: {table.concat(keys, ", ")}`)
-					end
+			if not targetRoot and #pathParts > 1 then
+				local keys = {}
+				for k in validAncestors do table.insert(keys, k) end
+				error(`Unknown ancestor key "{pathParts[1]}" in "{resolvedTarget}". Valid keys: {table.concat(keys, ", ")}`)
+			end
 
-					if targetRoot then
-						return call(microprofiler, LABELS.PATH_TRAVERSE, function()
-							local inst = targetRoot
-							for i = 2, #pathParts do
-								local next = inst:FindFirstChild(pathParts[i])
-								if not next and config.CaseSensitive == false then
-									local lower = pathParts[i]:lower()
-									for _, child in inst:GetChildren() do
-										if child.Name:lower() == lower then next = child break end
-									end
-								end
-								if not next then
-									error(`Module "{resolvedTarget}" not found: "{pathParts[i]}" does not exist in "{inst:GetFullName()}".`)
-								end
-								inst = next :: Instance
+			if targetRoot then
+				local inst = targetRoot
+				for i = 2, #pathParts do
+					local next = inst:FindFirstChild(pathParts[i])
+					if not next and config.CaseSensitive == false then
+						local lower = pathParts[i]:lower()
+						for _, child in inst:GetChildren() do
+							if child.Name:lower() == lower then 
+								next = child
+								break
 							end
-
-							assert(inst:IsA("ModuleScript"), `"{resolvedTarget}" is not a ModuleScript`)
-							local module = inst :: ModuleScript
-
-							unambiguousCache[resolvedTarget] = module
-							module.AncestryChanged:Once(function()
-								call(microprofiler, LABELS.CACHE_INVALIDATE, function()
-									unambiguousCache[resolvedTarget] = nil
-								end)
-							end)
-
-							return requireModule(module)
-						end)
+						end
 					end
-
-					-- ── Ambiguous path: @ModuleName ──────────────────────────────
-					if not primaryRoot then
-						error(`Cannot resolve "{resolvedTarget}": no valid ancestor found for context`)
+					if not next then
+						error(`Module "{resolvedTarget}" not found: "{pathParts[i]}" does not exist in "{inst:GetFullName()}".`)
 					end
+					inst = next :: Instance
+				end
 
-					local found = Search.searchForModule(root, pathParts[1], ancestorsArray, config)
-					if not found then
-						local others = table.clone(ancestorsArray)
-						local idx = table.find(others, primaryRoot)
-						if idx then table.remove(others, idx) end
-						found = Search.searchRoots(others, pathParts, config)
-					end
+				assert(inst:IsA("ModuleScript"), `"{resolvedTarget}" is not a ModuleScript`)
+				local module = inst :: ModuleScript
 
-					if not found then
-						error(`Module "{resolvedTarget}" not found in any valid ancestor.`)
-					end
-
-					cache[resolvedTarget] = found
-					found.AncestryChanged:Once(function()
-						call(microprofiler, LABELS.CACHE_INVALIDATE, function()
-							cache[resolvedTarget] = nil
-						end)
-					end)
-
-					return call(microprofiler, LABELS.MODULE_LOAD .. "_" .. found.Name, function()
-						return requireModule(found :: ModuleScript)
-					end)
+				unambiguousCache[resolvedTarget] = module
+				module.AncestryChanged:Once(function()
+					unambiguousCache[resolvedTarget] = nil
 				end)
+
+				return requireModule(module)
+			end
+
+			-- ── Ambiguous path: @ModuleName ──────────────────────────────
+			if not primaryRoot then
+				error(`Cannot resolve "{resolvedTarget}": no valid ancestor found for context`)
+			end
+
+			local found = Search.searchForModule(root, pathParts[1], ancestorsArray, config)
+			if not found then
+				local others = table.clone(ancestorsArray)
+				local idx = table.find(others, primaryRoot)
+				if idx then table.remove(others, idx) end
+				found = Search.searchRoots(others, pathParts, config)
+			end
+
+			if not found then
+				error(`Module "{resolvedTarget}" not found in any valid ancestor.`)
+			end
+
+			cache[resolvedTarget] = found
+			found.AncestryChanged:Once(function()
+				cache[resolvedTarget] = nil
 			end)
+
+			return requireModule(found :: ModuleScript)
 		end
 
 		return Require
