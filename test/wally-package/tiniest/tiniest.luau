@@ -189,6 +189,9 @@ function tiniest.configure(options: Options)
 		```
 	]=]
 	function self.test(label: string, run: () -> ()): ()
+		assert(typeof(label) == "string", "Test label must be a string")
+		assert(label ~= "", "Test Label should not be empty")
+		assert(typeof(run) == "function", "Test body must be a function")
 		local context = get_context()
 		assert(context.type == "describe", "This function can only be called outside of tests")
 		local labels = table.clone(context.labels)

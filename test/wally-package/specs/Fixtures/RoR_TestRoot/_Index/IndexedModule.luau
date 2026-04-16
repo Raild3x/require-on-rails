@@ -1,0 +1,1 @@
+return "indexed_module"

@@ -40,6 +40,7 @@
 ]=]
 
 local tiniest_quote = require("./tiniest_quote")
+local outputCapture = require("./tiniest_output_capture")
 
 local tiniest_expect = {}
 
@@ -120,6 +121,45 @@ end
 	- `.never_fails()` -- Asserts the function does not throw an error
 	- `.fails_with(message)` -- Asserts the function fails with an error containing the message (case-insensitive)
 	- `.never_fails_with(message)` -- Asserts the function doesn't fail with the message
+
+	### Output Capture
+	### Output Capture (Roblox only, via `LogService.MessageOut`)
+	Captures `print`, `warn`, and cross-thread `error` output.
+
+	- Errors thrown **directly** in `fn` are caught by our `pcall` and stored in
+	  `CapturedOutput.fnError`. They are NOT in the `error` spec field. Use
+	  `fails` / `fails_with` if you only care about direct errors.
+	- Errors thrown in **other threads** (e.g. inside a `task.spawn` inside `fn`)
+	  are NOT caught by `pcall` and DO arrive via `LogService.MessageOut`. Those
+	  go into `CapturedOutput.errors` and can be asserted with `spec.error`.
+
+	`fn` runs in a new thread. After it finishes, `captureOutput` waits at most
+	`timeout` seconds (default **0.5 s**) for in-flight `LogService` events.
+	Both assertions exit as soon as their condition is decided, so tests never
+	sit through the full timeout unnecessarily:
+	- `outputs` exits as soon as all spec conditions are satisfied.
+	- `never_outputs` exits as soon as any violation is detected (for fast
+	  failure), but must wait the full timeout to confirm success.
+
+	Spec field values (`print`, `warn`, `error`):
+	- `true`        -- at least one line of that kind must exist
+	- `"pattern"`   -- at least one line must match the Lua pattern (case-insensitive)
+	- `{"p1","p2"}` -- for *each* pattern, at least one line must match
+
+	If `fn` itself throws (i.e. `fnError` is set), a note is appended to any
+	failure message automatically. `fnError` is informational and does not by
+	itself cause `outputs` / `never_outputs` to fail.
+
+	- `.outputs(spec, timeout?)` -- Asserts all spec conditions are met
+	- `.never_outputs(spec, timeout?)` -- Asserts none of the spec conditions are met
+
+	Shorthands (equivalent to `outputs`/`never_outputs` with a single-field spec):
+	- `.prints(pattern?, timeout?)` -- Asserts `fn` prints something (matching `pattern` if given)
+	- `.never_prints(pattern?, timeout?)` -- Asserts `fn` does not print (or not matching `pattern`)
+	- `.warns(pattern?, timeout?)` -- Asserts `fn` warns something
+	- `.never_warns(pattern?, timeout?)` -- Asserts `fn` does not warn
+	- `.errors(pattern?, timeout?)` -- Asserts a cross-thread error is logged
+	- `.never_errors(pattern?, timeout?)` -- Asserts no cross-thread error is logged
 	
 	## Examples
 	```lua
@@ -300,6 +340,199 @@ function tiniest_expect.expect(a: any)
 		check(typeof(a) == "function", "expect() value must be function")
 		local ok, err = pcall(a)
 		return if ok or not err:lower():match(b:lower()) then tests else fail()
+	end
+
+	-- ── Output-capture helpers ──────────────────────────────────────────────────────
+
+	local function describeCaptured(lines: { string }): string
+		return if #lines > 0 then table.concat(lines, "; ") else "(nothing)"
+	end
+
+	local function findMatch(lines: { string }, pattern: string): string?
+		local lower = pattern:lower()
+		for _, line in lines do
+			if line:lower():match(lower) then
+				return line
+			end
+		end
+		return nil
+	end
+
+	--- Applies one spec field against `lines`, appending any failure reason.
+	--- `negate` flips the logic for `never_outputs`.
+	local function checkSpecField(
+		specValue: (true | string | { string })?,
+		lines: { string },
+		kind: string,
+		failures: { string },
+		negate: boolean
+	): ()
+		if specValue == nil then
+			return
+		end
+		if specValue == true then
+			if not negate and #lines == 0 then
+				table.insert(failures, `Expected at least one {kind}, got none`)
+			elseif negate and #lines > 0 then
+				table.insert(failures, `Expected no {kind}s, but got: {describeCaptured(lines)}`)
+			end
+		elseif typeof(specValue) == "string" then
+			local matched = findMatch(lines, specValue)
+			if not negate and matched == nil then
+				table.insert(failures, `No {kind} matched pattern '{specValue}'. Got: {describeCaptured(lines)}`)
+			elseif negate and matched ~= nil then
+				table.insert(failures, `{kind} matched pattern '{specValue}': '{matched}'`)
+			end
+		elseif typeof(specValue) == "table" then
+			for _, pattern in specValue :: { string } do
+				local matched = findMatch(lines, pattern)
+				if not negate and matched == nil then
+					table.insert(failures, `No {kind} matched pattern '{pattern}'. Got: {describeCaptured(lines)}`)
+				elseif negate and matched ~= nil then
+					table.insert(failures, `{kind} matched pattern '{pattern}': '{matched}'`)
+				end
+			end
+		end
+	end
+
+	type OutputSpec = {
+		print: (true | string | { string })?,
+		warn: (true | string | { string })?,
+		error: (true | string | { string })?,
+	}
+
+	--- Returns true when all conditions in `spec` are already satisfied by `captured`.
+	--- Used as the `stopPredicate` for `outputs` so we exit as soon as we have everything.
+	local function specSatisfied(spec: OutputSpec, captured: outputCapture.CapturedOutput): boolean
+		if spec.print ~= nil then
+			if spec.print == true then
+				if #captured.prints == 0 then return false end
+			elseif typeof(spec.print) == "string" then
+				if findMatch(captured.prints, spec.print :: string) == nil then return false end
+			else
+				for _, p in spec.print :: { string } do
+					if findMatch(captured.prints, p) == nil then return false end
+				end
+			end
+		end
+		if spec.warn ~= nil then
+			if spec.warn == true then
+				if #captured.warns == 0 then return false end
+			elseif typeof(spec.warn) == "string" then
+				if findMatch(captured.warns, spec.warn :: string) == nil then return false end
+			else
+				for _, p in spec.warn :: { string } do
+					if findMatch(captured.warns, p) == nil then return false end
+				end
+			end
+		end
+		if spec.error ~= nil then
+			if spec.error == true then
+				if #captured.errors == 0 then return false end
+			elseif typeof(spec.error) == "string" then
+				if findMatch(captured.errors, spec.error :: string) == nil then return false end
+			else
+				for _, p in spec.error :: { string } do
+					if findMatch(captured.errors, p) == nil then return false end
+				end
+			end
+		end
+		return true
+	end
+
+	--- Returns true as soon as any spec condition is violated by `captured`.
+	--- Used as the `stopPredicate` for `never_outputs` so we fail fast.
+	local function specViolated(spec: OutputSpec, captured: outputCapture.CapturedOutput): boolean
+		if spec.print ~= nil then
+			if spec.print == true then
+				if #captured.prints > 0 then return true end
+			elseif typeof(spec.print) == "string" then
+				if findMatch(captured.prints, spec.print :: string) ~= nil then return true end
+			else
+				for _, p in spec.print :: { string } do
+					if findMatch(captured.prints, p) ~= nil then return true end
+				end
+			end
+		end
+		if spec.warn ~= nil then
+			if spec.warn == true then
+				if #captured.warns > 0 then return true end
+			elseif typeof(spec.warn) == "string" then
+				if findMatch(captured.warns, spec.warn :: string) ~= nil then return true end
+			else
+				for _, p in spec.warn :: { string } do
+					if findMatch(captured.warns, p) ~= nil then return true end
+				end
+			end
+		end
+		if spec.error ~= nil then
+			if spec.error == true then
+				if #captured.errors > 0 then return true end
+			elseif typeof(spec.error) == "string" then
+				if findMatch(captured.errors, spec.error :: string) ~= nil then return true end
+			else
+				for _, p in spec.error :: { string } do
+					if findMatch(captured.errors, p) ~= nil then return true end
+				end
+			end
+		end
+		return false
+	end
+
+	local function appendFnError(captured: outputCapture.CapturedOutput, failures: { string }): ()
+		if captured.fnError ~= nil then
+			table.insert(failures, `(fn itself threw: {captured.fnError})`)
+		end
+	end
+
+	function tests.outputs(spec: OutputSpec, timeout: number?)
+		check(typeof(a) == "function", "expect() value must be function")
+		local captured = outputCapture.captureOutput(a, timeout, function(c)
+			return specSatisfied(spec, c)
+		end)
+		local failures: { string } = {}
+		checkSpecField(spec.print, captured.prints, "print", failures, false)
+		checkSpecField(spec.warn, captured.warns, "warn", failures, false)
+		checkSpecField(spec.error, captured.errors, "error", failures, false)
+		appendFnError(captured, failures)
+		return if #failures == 0 then tests else fail(table.concat(failures, "\n"))
+	end
+
+	function tests.never_outputs(spec: OutputSpec, timeout: number?)
+		check(typeof(a) == "function", "expect() value must be function")
+		local captured = outputCapture.captureOutput(a, timeout, function(c)
+			return specViolated(spec, c) -- stop early on first violation (fast failure)
+		end)
+		local failures: { string } = {}
+		checkSpecField(spec.print, captured.prints, "print", failures, true)
+		checkSpecField(spec.warn, captured.warns, "warn", failures, true)
+		checkSpecField(spec.error, captured.errors, "error", failures, true)
+		appendFnError(captured, failures)
+		return if #failures == 0 then tests else fail(table.concat(failures, "\n"))
+	end
+
+	function tests.prints(pattern: (true | string | { string })?, timeout: number?)
+		return tests.outputs({ print = pattern or true }, timeout)
+	end
+
+	function tests.never_prints(pattern: (true | string | { string })?, timeout: number?)
+		return tests.never_outputs({ print = pattern or true }, timeout)
+	end
+
+	function tests.warns(pattern: (true | string | { string })?, timeout: number?)
+		return tests.outputs({ warn = pattern or true }, timeout)
+	end
+
+	function tests.never_warns(pattern: (true | string | { string })?, timeout: number?)
+		return tests.never_outputs({ warn = pattern or true }, timeout)
+	end
+
+	function tests.errors(pattern: (true | string | { string })?, timeout: number?)
+		return tests.outputs({ error = pattern or true }, timeout)
+	end
+
+	function tests.never_errors(pattern: (true | string | { string })?, timeout: number?)
+		return tests.never_outputs({ error = pattern or true }, timeout)
 	end
 
 	function tests.is_greater_than(b: number)
