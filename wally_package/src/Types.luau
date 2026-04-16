@@ -12,6 +12,7 @@ export type Config = {
 	MaxSearchDepth: number?,
 	CaseSensitive: boolean?,
 	CircularDependencyDetection: boolean?,
+	DisableCache: boolean?,
 }
 
 return {}
