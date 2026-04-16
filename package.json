@@ -99,6 +99,11 @@
             "type": "string"
           }
         },
+        "require-on-rails.contextualImportTemplate": {
+          "type": "string",
+          "default": "local Import = require({IMPORT_MODULE_PATH})\nrequire = Import(script)",
+          "description": "Template used when inserting contextual import code. Must include {IMPORT_MODULE_PATH} placeholder."
+        },
         "require-on-rails.preferredImportPlacement": {
           "type": "string",
           "default": "TopOfFile",

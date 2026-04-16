@@ -3,6 +3,11 @@ const fs = require('fs');
 const path = require('path');
 const { warn } = require('../core/logger');
 
+const DEFAULT_CONTEXTUAL_IMPORT_TEMPLATE = [
+    'local Import = require({IMPORT_MODULE_PATH})',
+    'require = Import(script)'
+].join('\n');
+
 /**
  * Checks if workspace folders are available
  * @returns {boolean} - True if workspace folders are available
@@ -104,7 +109,8 @@ function getCommonConfig() {
         tryToAddImportRequire: config.get('tryToAddImportRequire', true),
         preferredImportPlacement: config.get('preferredImportPlacement', 'TopOfFile'),
         addSeleneCommentToImport: config.get('addSeleneCommentToImport', false),
-        importOpacity: config.get('importOpacity', 0.45)
+        importOpacity: config.get('importOpacity', 0.45),
+        contextualImportTemplate: config.get('contextualImportTemplate', DEFAULT_CONTEXTUAL_IMPORT_TEMPLATE)
     };
 }
 

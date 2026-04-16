@@ -9,7 +9,8 @@ const {
     addImportToAllFiles,
     addImportToSingleFile,
     hasValidImportRequire,
-    getImportRequireLineIndexes
+    getImportRequireLineIndexes,
+    createContextualImportSnippet
 } = require('../../../src/features/addImportToFiles');
 
 // Import shared test utilities
@@ -156,9 +157,8 @@ return {}`
             // Read modified content
             const modifiedContent = fs.readFileSync(filePath, 'utf8');
             
-            // Verify import was added - check for base pattern since :: typeof(require) is optional
-            const expectedImportBase = `require = require(${defaultImportModulePath})(script)`;
-            assert.ok(modifiedContent.includes(expectedImportBase), 'Modified file should contain import require definition');
+            const expectedImportSnippet = createContextualImportSnippet(defaultImportModulePath);
+            assert.ok(modifiedContent.includes(expectedImportSnippet), 'Modified file should contain import require definition');
             
             // Verify it was placed after game:GetService as expected
             const lines = modifiedContent.split('\n');
@@ -169,7 +169,7 @@ return {}`
                 if (line.includes('game:GetService')) {
                     gameServiceLineIndex = index;
                 }
-                if (line.includes(expectedImportBase)) {
+                if (line.includes('local Import = require(')) {
                     importLineIndex = index;
                 }
             });
@@ -209,10 +209,12 @@ return {}`
             
             const content = fs.readFileSync(filePath, 'utf8');
             const lines = content.split('\n');
-            const expectedImportBase = `require = require(${defaultImportModulePath})(script)`;
+            const expectedFirstLine = `local Import = require(${defaultImportModulePath})`;
+            const expectedSecondLine = 'require = Import(script)';
             
             // Should be at the very beginning
-            assert.ok(lines[0].includes(expectedImportBase), 'Import should be at top of file');
+            assert.strictEqual(lines[0], expectedFirstLine, 'First import line should be at top of file');
+            assert.strictEqual(lines[1], expectedSecondLine, 'Second import line should follow the first import line');
             
         } finally {
             restore();
@@ -240,10 +242,10 @@ return {}`
             
             const content = fs.readFileSync(filePath, 'utf8');
             const expectedSeleneComment = '-- selene: allow(incorrect_standard_library_use)';
-            const expectedImportBase = `require = require(${defaultImportModulePath})(script)`;
+            const expectedImportSnippet = createContextualImportSnippet(defaultImportModulePath);
             
             assert.ok(!content.includes(expectedSeleneComment), 'Should not include selene comment by default');
-            assert.ok(content.includes(expectedImportBase), 'Should include import require definition');
+            assert.ok(content.includes(expectedImportSnippet), 'Should include import require definition');
             
         } finally {
             restore();
@@ -277,14 +279,14 @@ return {}`
             const content = fs.readFileSync(filePath, 'utf8');
             
             const expectedSeleneComment = '-- selene: allow(incorrect_standard_library_use)';
-            const expectedImportBase = `require = require(${defaultImportModulePath})(script)`;
+            const expectedImportSnippet = createContextualImportSnippet(defaultImportModulePath);
             
             assert.ok(content.includes(expectedSeleneComment), 'Should include selene comment when enabled');
-            assert.ok(content.includes(expectedImportBase), 'Should include import require definition');
+            assert.ok(content.includes(expectedImportSnippet), 'Should include import require definition');
             
             // Verify order: selene comment should come before import
             const seleneIndex = content.indexOf(expectedSeleneComment);
-            const importIndex = content.indexOf(expectedImportBase);
+            const importIndex = content.indexOf(expectedImportSnippet);
             assert.ok(seleneIndex < importIndex, 'Selene comment should come before import');
             
         } finally {
@@ -318,10 +320,10 @@ return {}`
             
             const content = fs.readFileSync(filePath, 'utf8');
             const expectedSeleneComment = '-- selene: allow(incorrect_standard_library_use)';
-            const expectedImportBase = `require = require(${defaultImportModulePath})(script)`;
+            const expectedImportSnippet = createContextualImportSnippet(defaultImportModulePath);
             
             assert.ok(!content.includes(expectedSeleneComment), 'Should not include selene comment when disabled');
-            assert.ok(content.includes(expectedImportBase), 'Should still include import require definition');
+            assert.ok(content.includes(expectedImportSnippet), 'Should still include import require definition');
             
         } finally {
             restore();
@@ -389,13 +391,12 @@ return {}`
             
             const content = fs.readFileSync(filePath, 'utf8');
             const lines = content.split('\n');
-            const expectedImportBase = `require = require(${defaultImportModulePath})(script)`;
             
             let importLineIndex = -1;
             let firstRequireLineIndex = -1;
             
             lines.forEach((line, index) => {
-                if (line.includes(expectedImportBase)) {
+                if (line.includes('local Import = require(')) {
                     importLineIndex = index;
                 }
                 if (line.includes('require("@SomeModule")') && firstRequireLineIndex === -1) {
@@ -410,6 +411,45 @@ return {}`
         } finally {
             restore();
             cleanupTestFiles(testWorkspacePath, ['src/Server/BeforeRequire.luau']);
+        }
+    });
+
+    test('Should skip existing contextual import lines when finding first require', async () => {
+        const restore = mockWorkspaceConfig(testWorkspaceUri);
+
+        try {
+            createTestFiles(testWorkspacePath, {
+                'src/Server/BeforeRequireWithExistingContext.luau': `
+local Import = require("@rbxts/services")
+require = Import(script)
+local something = require("@SomeModule")
+return {}`
+            });
+
+            const filePath = path.join(testWorkspacePath, 'src/Server/BeforeRequireWithExistingContext.luau');
+            const defaultImportModulePath = '"@rbxts/services"';
+
+            const success = addImportToSingleFile(filePath, defaultImportModulePath, 'BeforeFirstRequire');
+            assert.ok(success, 'Should run insertion logic');
+
+            const lines = fs.readFileSync(filePath, 'utf8').split('\n');
+            const contextualImportIndexes = [];
+            let firstModuleRequireIndex = -1;
+
+            lines.forEach((line, index) => {
+                if (line.includes('local Import = require("@rbxts/services")')) {
+                    contextualImportIndexes.push(index);
+                }
+                if (line.includes('require("@SomeModule")') && firstModuleRequireIndex === -1) {
+                    firstModuleRequireIndex = index;
+                }
+            });
+
+            assert.ok(contextualImportIndexes.length >= 2, 'Should have both existing and inserted contextual import lines');
+            assert.ok(firstModuleRequireIndex > contextualImportIndexes[1], 'Inserted contextual import should be placed before first non-context require');
+        } finally {
+            restore();
+            cleanupTestFiles(testWorkspacePath, ['src/Server/BeforeRequireWithExistingContext.luau']);
         }
     });
 

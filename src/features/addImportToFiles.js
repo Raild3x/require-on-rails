@@ -4,6 +4,11 @@ const vscode = require('vscode');
 const { print, warn } = require('../core/logger');
 const { getCommonConfig, scanDirectory, requireWorkspaceRoot } = require('../utils/workspaceUtils');
 
+const DEFAULT_CONTEXTUAL_IMPORT_TEMPLATE = [
+    'local Import = require({IMPORT_MODULE_PATH})',
+    'require = Import(script)'
+].join('\n');
+
 /**
  * Main function to add import require definitions to files using custom aliases
  */
@@ -12,7 +17,7 @@ function addImportToAllFiles() {
     if (!workspaceRoot) return;
 
     const config = getCommonConfig();
-    const { directoriesToScan, ignoreDirectories, importModulePaths } = config;
+    const { directoriesToScan, ignoreDirectories, importModulePaths, contextualImportTemplate } = config;
     const pathsArray = Array.isArray(importModulePaths) ? importModulePaths : [importModulePaths];
     const defaultImportModulePath = pathsArray[0];
     
@@ -46,9 +51,9 @@ function addImportToAllFiles() {
         'Yes', 'No', 'Show Files'
     ).then(selection => {
         if (selection === 'Show Files') {
-            showFilesPreview(filesToProcess, defaultImportModulePath);
+            showFilesPreview(filesToProcess, defaultImportModulePath, contextualImportTemplate);
         } else if (selection === 'Yes') {
-            addImportToFiles(filesToProcess, defaultImportModulePath, workspaceRoot);
+            addImportToFiles(filesToProcess, defaultImportModulePath, workspaceRoot, contextualImportTemplate);
         }
     });
 }
@@ -152,6 +157,26 @@ function getImportRequireLineIndexes(content, importModulePaths) {
 }
 
 /**
+ * Builds the contextual import snippet from a template for easier customization.
+ */
+function createContextualImportSnippet(importModulePath) {
+    const { contextualImportTemplate } = getCommonConfig();
+    return createContextualImportSnippetFromTemplate(importModulePath, contextualImportTemplate);
+}
+
+/**
+ * Builds the contextual import snippet from a template, falling back when invalid.
+ */
+function createContextualImportSnippetFromTemplate(importModulePath, template) {
+    const templateToUse =
+        typeof template === 'string' && template.includes('{IMPORT_MODULE_PATH}')
+            ? template
+            : DEFAULT_CONTEXTUAL_IMPORT_TEMPLATE;
+
+    return templateToUse.replace('{IMPORT_MODULE_PATH}', importModulePath);
+}
+
+/**
  * Checks if a file has a valid import require definition
  */
 function hasValidImportRequire(content, importModulePaths) {
@@ -194,20 +219,21 @@ function shouldIgnoreDirectory(dirName, ignorePatterns) {
 /**
  * Shows a preview of files that will be modified
  */
-function showFilesPreview(filesToProcess, defaultImportModulePath) {
+function showFilesPreview(filesToProcess, defaultImportModulePath, contextualImportTemplate) {
     const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
     const relativePaths = filesToProcess.map(file => 
         path.relative(workspaceRoot, file).replace(/\\/g, '/')
     );
     
-    const message = `Files that will receive the import require definition:\n\n${relativePaths.join('\n')}\n\nImport to add: require = require(${defaultImportModulePath})(script) :: typeof(require)`;
+    const importPreview = createContextualImportSnippetFromTemplate(defaultImportModulePath, contextualImportTemplate);
+    const message = `Files that will receive the import require definition:\n\n${relativePaths.join('\n')}\n\nImport to add:\n${importPreview}`;
     
     vscode.window.showInformationMessage(
         `${filesToProcess.length} files will be modified.`,
         'Proceed', 'Cancel'
     ).then(selection => {
         if (selection === 'Proceed') {
-            addImportToFiles(filesToProcess, defaultImportModulePath, workspaceRoot);
+            addImportToFiles(filesToProcess, defaultImportModulePath, workspaceRoot, contextualImportTemplate);
         }
     });
 }
@@ -215,7 +241,7 @@ function showFilesPreview(filesToProcess, defaultImportModulePath) {
 /**
  * Adds the import require definition to all specified files
  */
-function addImportToFiles(filesToProcess, defaultImportModulePath, workspaceRoot) {
+function addImportToFiles(filesToProcess, defaultImportModulePath, workspaceRoot, contextualImportTemplate) {
     const config = getCommonConfig();
     const { preferredImportPlacement } = config;
     
@@ -224,7 +250,7 @@ function addImportToFiles(filesToProcess, defaultImportModulePath, workspaceRoot
     
     filesToProcess.forEach(filePath => {
         try {
-            if (addImportToSingleFile(filePath, defaultImportModulePath, preferredImportPlacement)) {
+            if (addImportToSingleFile(filePath, defaultImportModulePath, preferredImportPlacement, contextualImportTemplate)) {
                 successCount++;
                 const relativePath = path.relative(workspaceRoot, filePath).replace(/\\/g, '/');
                 print(`Added import require to: ${relativePath}`);
@@ -248,9 +274,12 @@ function addImportToFiles(filesToProcess, defaultImportModulePath, workspaceRoot
 /**
  * Adds import require definition to a single file
  */
-function addImportToSingleFile(filePath, defaultImportModulePath, preferredImportPlacement) {
+function addImportToSingleFile(filePath, defaultImportModulePath, preferredImportPlacement, contextualImportTemplate) {
     const content = fs.readFileSync(filePath, 'utf8');
     const lines = content.split('\n');
+    const contextualImportLineIndexes = new Set(
+        getImportRequireLineIndexes(content, [defaultImportModulePath])
+    );
     
     const config = getCommonConfig();
     const { addSeleneCommentToImport } = config;
@@ -261,7 +290,7 @@ function addImportToSingleFile(filePath, defaultImportModulePath, preferredImpor
         fs.existsSync(path.join(workspaceFolder.uri.fsPath, 'selene.toml'));
     
     const seleneComment = '-- selene: allow(incorrect_standard_library_use)';
-    const importRequire = `require = require(${defaultImportModulePath})(script)`;
+    const importRequire = createContextualImportSnippetFromTemplate(defaultImportModulePath, contextualImportTemplate);
     
     // Check if selene comment already exists
     const hasSeleneComment = lines.some(line => 
@@ -282,6 +311,10 @@ function addImportToSingleFile(filePath, defaultImportModulePath, preferredImpor
             // Look for existing 'require(' on global scope
             let foundRequire = false;
             for (let i = 0; i < lines.length; i++) {
+                if (contextualImportLineIndexes.has(i)) {
+                    continue;
+                }
+
                 const line = lines[i].trim();
                 // Match various require patterns:
                 // - require(...)
@@ -343,5 +376,7 @@ module.exports = {
     addImportToAllFiles,
     addImportToSingleFile,
     hasValidImportRequire,
-    getImportRequireLineIndexes
+    getImportRequireLineIndexes,
+    createContextualImportSnippet,
+    createContextualImportSnippetFromTemplate
 };
