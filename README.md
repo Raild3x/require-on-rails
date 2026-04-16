@@ -42,6 +42,8 @@ The extension automatically hides or reduces the opacity of boilerplate import l
 - Multiple placement options for import statements (top of file, before first require, after services)
 - Optional Selene comment support for import lines
 - Centralized import validation logic
+- Configurable contextual import insertion template via `require-on-rails.contextualImportTemplate`
+- Supports both single-line and multiline contextual import detection/hiding (including optional type annotations/comments)
 
 ### Status Bar Integration
 Toggle the extension on/off with a convenient status bar button showing the current state.
@@ -123,6 +125,10 @@ Adjust these key settings to match your project structure in your VS Code settin
         "game:GetService(\"ReplicatedStorage\").src.Import", // Potential alternate path
         "game.ReplicatedStorage.src.Import" // Potential alternate path
     ],
+
+    // Controls the contextual import snippet inserted into files.
+    // Must include the {IMPORT_MODULE_PATH} placeholder.
+    "require-on-rails.contextualImportTemplate": "local Import = require({IMPORT_MODULE_PATH})\\nrequire = Import(script)",
 }
 ```
 
@@ -136,11 +142,13 @@ Ensure your project follows a structure where:
 1. Get the RequireOnRails Luau module via Wally or the `downloadLuauModule` command.
 2. Create an `Import.luau` module by following the instructions in the module. (Example below)
 3. Ensure your `importModulePaths` configuration points to your newly setup `Import` module
-4. Add the require override line to your files:
+4. Add the contextual import snippet to your files:
    
 ```lua
--- This line may vary depending on your `importModulePaths` configuration
-require = require(ReplicatedStorage.src.Import)(script)
+-- This snippet may vary depending on your `importModulePaths`
+-- and `contextualImportTemplate` configuration
+local Import = require(ReplicatedStorage.src.Import)
+require = Import(script)
 ```
 <details>
 <summary>`Import.luau` Module Example</summary>
@@ -166,7 +174,7 @@ end
 
 if RunService:IsClient() then
 	ImportGenerator = RequireOnRails.create {
-		Ancestors = {
+		Aliases = {
 			["Client"] = ReplicatedStorage.src.Client,
 			["Shared"] = ReplicatedStorage.src.Shared,
 			["Packages"] = ReplicatedStorage.src.Packages,
@@ -176,7 +184,7 @@ if RunService:IsClient() then
 else
 	local ServerScriptService = game:GetService("ServerScriptService")
 	ImportGenerator = RequireOnRails.create {
-		Ancestors = {
+		Aliases = {
 			["Server"] = ServerScriptService.src.Server,
 			["Shared"] = ReplicatedStorage.src.Shared,
 			["Packages"] = ReplicatedStorage.src.Packages,
@@ -188,6 +196,21 @@ end
 
 return ImportGenerator
 ```
+</details>
+<details>
+<summary>Luau Module Configuration Reference</summary>
+All options are passed to `RequireOnRails.create { … }`:
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `Aliases` | `{ [string]: Instance \| string }` | *(required)* | Maps keys to ancestor root instances or short string aliases. String values expand to another key in the same table (e.g. `R = "Root"` makes `@R/Foo` resolve as `@Root/Foo`; `Svc = "Root/Services"` supports sub-path prefixes). Keys `"self"` and `"game"` are reserved. All ambiguous modules should be descendant of one of these values. |
+| `Ancestors` | `{ [string]: Instance \| string }?` | `nil` | **Deprecated.** Accepted for backwards compatibility; merged into `Aliases` at `create()` time (`Aliases` takes precedence on key conflicts). Prefer `Aliases` for new code. |
+| `IgnorePredicate` | `((Instance) -> boolean)?` | `nil` | Called on each container during search; return `true` to skip that subtree. |
+| `Debug` | `boolean?` | `false` | Prints detailed resolution steps to the output. |
+| `MaxSearchDepth` | `number?` | `50` | Maximum folder depth for ambiguous searches. Does not apply to explicit absolute paths. |
+| `CaseSensitive` | `boolean?` | `true` | When `false`, path segments are matched case-insensitively. |
+| `CircularDependencyDetection` | `boolean?` | `true` | Detects and errors on circular `require` chains with a formatted chain trace. |
+| `DisableCache` | `boolean?` | `false` | When `true`, skips the module-path → instance lookup cache, re-resolving on every call. Native Luau `require()` still caches module execution results. |
 </details>
 
 ## Usage
@@ -210,7 +233,7 @@ return ImportGenerator
 
 ⚠️ **RequireOnRails Module**: This extension requires a separate Luau module to function. The module is available via Wally.
 
-⚠️ **Import override**: Properly override the require in each script. ex: `require = require(path.to.Import)(script)`. *(Do not localize! Doing so will break LuauLSP)*
+⚠️ **Import override**: Ensure each script sets the global `require` override (for example via the default multiline snippet). You may localize the import function variable (e.g. `local Import = ...`), but the final override must assign to global `require`.
 
 ## Extension Settings and Commands
 <details>
@@ -237,6 +260,11 @@ This extension contributes the following settings through `require-on-rails.*`:
     - `"ReplicatedStorage:FindFirstChild(\"Import\", true)"`
   - **Description**: Valid import module paths for the require override. Uses the first value as default when adding import statements. 
   - ***⚠️ Modify this to match your project structure!***
+
+* `require-on-rails.contextualImportTemplate`:
+  - **Type**: `string`
+  - **Default**: `"local Import = require({IMPORT_MODULE_PATH})\\nrequire = Import(script)"`
+  - **Description**: Template used when inserting contextual import code. Must include `{IMPORT_MODULE_PATH}` placeholder. If missing, RequireOnRails warns and falls back to the default template.
 
 * `require-on-rails.tryToAddImportRequire`: 
   - **Type**: `boolean`
@@ -310,8 +338,8 @@ RequireOnRails provides the following commands accessible via Command Palette (`
 </details>
 
 ## Troubleshooting
-
-### Common Issues
+<details>
+<summary>Common Issues</summary>
 
 **Q: My aliases aren't generating**
 - Check that `directoriesToScan` matches your actual directory structure
@@ -333,7 +361,17 @@ RequireOnRails provides the following commands accessible via Command Palette (`
 - Verify that the import module path in `importModulePaths` is correct
 - Ensure the target files contain `@` require statements
 
+**Q: Multiline contextual import lines are not hiding**
+- Ensure the file still contains core contextual import usage (`require = <something>(script)` or `require = require(...)(script)`)
+- If using a custom template, verify it still produces a valid contextual override pattern
+- Confirm `importOpacity` is not set near `1.0`
+
+**Q: I configured `contextualImportTemplate`, but insertion still looks default**
+- Verify the template includes `{IMPORT_MODULE_PATH}`
+- If placeholder is missing, RequireOnRails warns and uses the default template
+
 **Q: Selene comments not appearing**
 - Make sure `addSeleneCommentToImport` is set to `true`
 - Verify that a `selene.toml` file exists in your workspace root
 - Check that the import statement is being added successfully first
+</details>

@@ -485,7 +485,7 @@ return {}`;
         assert.ok(!hasValidImportRequire(content, importModulePaths), 'Should reject import assignment when require overwrite is missing');
     });
 
-    test('Should reject multiline import when configured path does not match', () => {
+    test('Should detect multiline import by core usage even when configured path differs', () => {
         const content = `
 local Import = require("@rbxts/services")
 require = Import(script)
@@ -493,7 +493,7 @@ local something = require("@SomeModule")
 return {}`;
 
         const importModulePaths = ['"@rbxts/other"'];
-        assert.ok(!hasValidImportRequire(content, importModulePaths), 'Should reject split pattern for non-configured import path');
+        assert.ok(hasValidImportRequire(content, importModulePaths), 'Should detect split pattern from core usage');
     });
 
     test('Should return correct line indexes for split import definition', () => {

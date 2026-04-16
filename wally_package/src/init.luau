@@ -81,16 +81,16 @@ local function debugLog(enabled: boolean, ...: any): ()
 end
 
 --[=[
-	Resolves path aliases defined in `Config.Aliases`.
-	For example: if `Aliases = { Svc = "Server/Services" }` then
-	`@Svc/Foo` resolves to `@Server/Services/Foo`.
+	Expands the first path segment when it matches an entry in `aliases`.
+	For example: if `aliases = { R = "Root" }` then `@R/Foo` becomes `@Root/Foo`.
+	Alias values may include a sub-path prefix: `{ Svc = "Root/Services" }` makes
+	`@Svc/Foo` resolve to `@Root/Services/Foo`.
 
 	@param path    -- The original `@`-prefixed path
-	@param aliases -- Optional alias map from Config
+	@param aliases -- Alias map (string key → target expansion) built from `Config.Ancestors`
 	@return string -- Resolved path (unchanged if no alias matches)
 ]=]
-local function resolveAlias(path: string, aliases: { [string]: string }?): string
-	if not aliases then return path end
+local function resolveAlias(path: string, aliases: { [string]: string }): string
 	local pathWithoutPrefix = path:sub(2)
 	local firstSegment = pathWithoutPrefix:split("/")[1]
 	if aliases[firstSegment] then
@@ -113,19 +113,54 @@ end
 ]=]
 local function CreateImportGenerator(_config: Config): ContextualImportGenerator
 	local config        = _config or {} :: Config
-	local validAncestors = config.Ancestors
-	local ancestorsArray: { Instance } = {}
 	local debug          = config.Debug or false
 	local circularDetect = config.CircularDependencyDetection ~= false
 	local disableCache   = config.DisableCache == true
 
-	assert(typeof(validAncestors) == "table", "Ancestors must be a table")
-	for key, ancestor in validAncestors do
-		assert(not table.find(RESERVED_ALIASES, key), `Ancestor key "{key}" is reserved by Roblox and cannot be used`)
-		table.insert(ancestorsArray, ancestor)
+	-- Build the merged alias table. config.Aliases is the primary field; config.Ancestors
+	-- is accepted for backwards compatibility and is merged in (Aliases takes precedence).
+	assert(config.Aliases ~= nil or config.Ancestors ~= nil, "Aliases must be a table")
+	local rawAliases: { [string]: Instance | string }
+	if config.Aliases and config.Ancestors then
+		rawAliases = table.clone(config.Aliases)
+		for k, v in config.Ancestors do
+			if rawAliases[k] == nil then rawAliases[k] = v end
+		end
+	elseif config.Aliases then
+		rawAliases = config.Aliases
+	else
+		rawAliases = config.Ancestors :: { [string]: Instance | string }
 	end
 
-	debugLog(debug, "Initialized with", #ancestorsArray, "ancestors")
+	local validAncestors: { [string]: Instance } = {}
+	local aliasMap: { [string]: string } = {}
+	local ancestorsArray: { Instance } = {}
+
+	-- First pass: separate Instance entries (ancestor roots) from string entries (aliases).
+	for key, value in rawAliases do
+		assert(not table.find(RESERVED_ALIASES, key), `Alias key "{key}" is reserved by Roblox and cannot be used`)
+		if typeof(value) == "Instance" then
+			validAncestors[key] = value
+			table.insert(ancestorsArray, value)
+		elseif typeof(value) == "string" then
+			aliasMap[key] = value
+		else
+			error(`Aliases entry "{key}" must be an Instance or a string alias, got {typeof(value)}`)
+		end
+	end
+
+	-- Second pass: validate that each string alias's root key resolves to a real ancestor.
+	for aliasKey, aliasValue in aliasMap do
+		local targetKey = aliasValue:split("/")[1]
+		assert(
+			validAncestors[targetKey] ~= nil,
+			`Alias "{aliasKey}" points to "{aliasValue}" but "{targetKey}" is not a registered ancestor key`
+		)
+	end
+
+	debugLog(debug, "Initialized with", #ancestorsArray, "ancestors and", (function()
+		local n = 0; for _ in aliasMap do n += 1 end; return n
+	end)(), "string aliases")
 
 	local unambiguousCache: ModuleCache = {}
 	local contextCache: ContextCache    = {}
@@ -278,7 +313,7 @@ local function CreateImportGenerator(_config: Config): ContextualImportGenerator
 				return require(target) :: any
 			end
 
-			local resolvedTarget = resolveAlias(target, config.Aliases)
+			local resolvedTarget = resolveAlias(target, aliasMap)
 			debugLog(debug, "Resolving:", target, "->", resolvedTarget)
 
 			-- Context-local cache hit

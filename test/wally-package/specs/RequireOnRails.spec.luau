@@ -53,14 +53,14 @@ return function(t)
 	local function makeConfig(overrides: { [string]: any }?)
 		local o = overrides or {}
 		return {
-			Ancestors             = o.Ancestors or { Root = root },
+			Aliases               = o.Aliases or { Root = root },
+			Ancestors             = o.Ancestors,
 			Debug                 = o.Debug,
 			IgnorePredicate       = o.IgnorePredicate,
 			MaxSearchDepth        = o.MaxSearchDepth,
 			CaseSensitive         = o.CaseSensitive,
-			Aliases               = o.Aliases,
-			TrackPerformance      = o.TrackPerformance,
 			CircularDependencyDetection = o.CircularDependencyDetection,
+			DisableCache          = o.DisableCache,
 		}
 	end
 
@@ -92,16 +92,31 @@ return function(t)
 			expect(gen(context)).never_is(gen(context))
 		end)
 
-		test("using 'self' as an ancestor key errors at creation time", function()
+		test("using 'self' as an alias key errors at creation time", function()
 			expect(function()
-				RequireOnRails.create({ Ancestors = { self = root } })
+				RequireOnRails.create({ Aliases = { self = root } })
 			end).fails_with("reserved")
 		end)
 
-		test("using 'game' as an ancestor key errors at creation time", function()
+		test("using 'game' as an alias key errors at creation time", function()
 			expect(function()
-				RequireOnRails.create({ Ancestors = { game = root } })
+				RequireOnRails.create({ Aliases = { game = root } })
 			end).fails_with("reserved")
+		end)
+
+		test("Ancestors field is accepted as a backwards-compatible alternative to Aliases", function()
+			local importFn = RequireOnRails.create({ Ancestors = { Root = root } })(context)
+			expect(importFn("@Root/ModuleA")).is("module_a")
+		end)
+
+		test("Ancestors and Aliases can coexist; Aliases takes precedence on key conflict", function()
+			-- Both define "Root"; Aliases wins. Ancestors contributes "Other".
+			local importFn = RequireOnRails.create({
+				Aliases   = { Root = root },
+				Ancestors = { Root = otherRoot, Other = otherRoot },
+			})(context)
+			expect(importFn("@Root/ModuleA")).is("module_a")  -- root wins, not otherRoot
+			expect(importFn("@Other/ModuleE")).is("module_e") -- from Ancestors
 		end)
 	end)
 
@@ -209,7 +224,7 @@ return function(t)
 			-- @Root/../RoR_OtherRoot/ModuleE climbs from Root up to Fixtures,
 			-- then descends into RoR_OtherRoot.
 			local importFn = RequireOnRails.create({
-				Ancestors = { Root = root, Other = otherRoot },
+				Aliases = { Root = root, Other = otherRoot },
 			})(context)
 			expect(importFn("@Root/../RoR_OtherRoot/ModuleE")).is("module_e")
 		end)
@@ -329,36 +344,57 @@ return function(t)
 	end)
 
 	-- ── Alias resolution ──────────────────────────────────────────────────────────
+	--
+	-- String values in Aliases act as short aliases.  A string-valued entry maps to
+	-- another key (with optional sub-path prefix) in the same table.
+	-- e.g. Aliases = { Root = root, R = "Root", Svc = "Root/SubFolder" }
 
 	describe("Alias resolution", function()
-		test("expands an alias prefix to the full ancestor key", function()
-			local importFn = makeImport(nil, { Aliases = { R = "Root" } })
+		test("string entry in Aliases expands to the target ancestor key", function()
+			local importFn = makeImport(nil, { Aliases = { Root = root, R = "Root" } })
 			expect(importFn("@R/ModuleA")).is("module_a")
 		end)
 
 		test("aliased and full paths resolve to the same value", function()
-			local importFn = makeImport(nil, { Aliases = { R = "Root" } })
+			local importFn = makeImport(nil, { Aliases = { Root = root, R = "Root" } })
 			expect(importFn("@R/ModuleB")).is(importFn("@Root/ModuleB"))
 		end)
 
-		test("non-aliased absolute paths still work when aliases are configured", function()
-			local importFn = makeImport(nil, { Aliases = { R = "Root" } })
+		test("non-aliased keys still work alongside aliases", function()
+			local importFn = makeImport(nil, { Aliases = { Root = root, R = "Root" } })
 			expect(importFn("@Root/ModuleA")).is("module_a")
 		end)
 
-		test("an alias with a multi-segment path resolves correctly", function()
-			-- Alias "Sub" → "Root" makes @Sub/SubFolder/ModuleC work
-			local importFn = makeImport(nil, { Aliases = { Sub = "Root" } })
-			expect(importFn("@Sub/SubFolder/ModuleC")).is("module_c")
+		test("an alias with a sub-path expansion resolves correctly", function()
+			-- "Sub" expands to "Root/SubFolder", so @Sub/ModuleC → root/SubFolder/ModuleC
+			local importFn = makeImport(nil, { Aliases = { Root = root, Sub = "Root/SubFolder" } })
+			expect(importFn("@Sub/ModuleC")).is("module_c")
 		end)
 
-		test("an unknown alias first-segment with a path errors immediately", function()
-			local importFn = makeImport(nil, { Aliases = { R = "Root" } })
-			-- @Z is not aliased to anything and "Z" is not an ancestor key;
-			-- multi-segment paths with an unrecognised key error at lookup time
+		test("multiple string aliases can coexist in the same Aliases table", function()
+			local importFn = makeImport(nil, { Aliases = { Root = root, R = "Root", S = "Root" } })
+			expect(importFn("@R/ModuleA")).is("module_a")
+			expect(importFn("@S/ModuleB")).is("module_b")
+		end)
+
+		test("create() errors when a string alias points to a non-existent ancestor key", function()
 			expect(function()
-				importFn("@Z/NonExistent_xyz456")
-			end).fails_with("Z")
+				RequireOnRails.create({ Aliases = { R = "NonExistentKey" } })
+			end).fails_with("NonExistentKey")
+		end)
+
+		test("create() errors when a string alias sub-path prefix points to a non-existent ancestor key", function()
+			expect(function()
+				RequireOnRails.create({ Aliases = { Sub = "Ghost/SubFolder" } })
+			end).fails_with("Ghost")
+		end)
+		
+		test("a segment not matching any key falls through to ambiguous search", function()
+			-- "Z" is not an alias key; single-segment path → ambiguous search → not found
+			local importFn = makeImport(nil, { Aliases = { Root = root, R = "Root" } })
+			expect(function()
+				importFn("@Z_Nonexistent_xyz456")
+			end).fails_with("not found")
 		end)
 	end)
 
@@ -534,7 +570,7 @@ return function(t)
 			ctx.Name = "TempCtx"
 			ctx.Parent = tempParent
 
-			local gen       = RequireOnRails.create({ Ancestors = { Temp = tempParent } })
+			local gen       = RequireOnRails.create({ Aliases = { Temp = tempParent } })
 			local _importFn = gen(ctx) -- creates context cache entry
 
 			expect(function()
@@ -558,7 +594,7 @@ return function(t)
 	describe("Multiple ancestors", function()
 		local function makeDualImport()
 			return RequireOnRails.create({
-				Ancestors = { Root = root, Other = otherRoot },
+				Aliases = { Root = root, Other = otherRoot },
 			})(context)
 		end
 
@@ -600,7 +636,7 @@ return function(t)
 	describe("Nested ancestors", function()
 		local function makeNestedImport(contextInst: Instance?)
 			return RequireOnRails.create({
-				Ancestors = { Root = root, Sub = subFolder },
+				Aliases = { Root = root, Sub = subFolder },
 			})(contextInst or context)
 		end
 

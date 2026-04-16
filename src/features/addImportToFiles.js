@@ -119,6 +119,20 @@ function createRequireOverwriteRegex(varName) {
 }
 
 /**
+ * Matches core single-line override form without requiring a specific module path.
+ */
+function createGenericSingleLineImportRegex() {
+    return /^\s*require\s*=\s*require\s*\(.+\)\s*\(\s*script\s*\)(?:\s*::.*)?(?:\s*--.*)?\s*$/;
+}
+
+/**
+ * Matches core split import assignment form without requiring a specific module path.
+ */
+function createGenericImportAssignmentRegex() {
+    return /^\s*(?:local\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*require\s*\(.+\)(?:\s*::.*)?(?:\s*--.*)?\s*$/;
+}
+
+/**
  * Returns line indexes for valid import override definitions in single-line or split form.
  */
 function getImportRequireLineIndexes(content, importModulePaths) {
@@ -141,6 +155,19 @@ function getImportRequireLineIndexes(content, importModulePaths) {
                 });
             }
         });
+
+        // Fallback to core usage detection for cases where configured path text differs.
+        if (createGenericSingleLineImportRegex().test(line)) {
+            matchedLineIndexes.add(lineIndex);
+        }
+
+        const genericAssignmentMatch = line.match(createGenericImportAssignmentRegex());
+        if (genericAssignmentMatch) {
+            assignmentCandidates.push({
+                lineIndex,
+                variableName: genericAssignmentMatch[1]
+            });
+        }
     });
 
     assignmentCandidates.forEach(candidate => {
