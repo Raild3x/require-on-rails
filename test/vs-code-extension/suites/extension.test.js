@@ -5,7 +5,12 @@ const fs = require('fs');
 
 // Import extension modules for testing
 const { generateFileAliases } = require('../../../src/features/updateLuaFileAliases');
-const { addImportToAllFiles, addImportToSingleFile, hasValidImportRequire } = require('../../../src/features/addImportToFiles');
+const {
+    addImportToAllFiles,
+    addImportToSingleFile,
+    hasValidImportRequire,
+    getImportRequireLineIndexes
+} = require('../../../src/features/addImportToFiles');
 
 // Import shared test utilities
 const {
@@ -406,5 +411,81 @@ return {}`
             restore();
             cleanupTestFiles(testWorkspacePath, ['src/Server/BeforeRequire.luau']);
         }
+    });
+
+    test('Should detect valid multiline import require definition', () => {
+        const content = `
+local Import = require("@rbxts/services")
+require = Import(script)
+local something = require("@SomeModule")
+return {}`;
+
+        const importModulePaths = ['"@rbxts/services"'];
+        assert.ok(hasValidImportRequire(content, importModulePaths), 'Should recognize split import and overwrite pattern');
+    });
+
+    test('Should detect valid multiline import with optional type annotation', () => {
+        const content = `
+local Import = require("@rbxts/services")
+require = Import(script) :: typeof(require)
+local something = require("@SomeModule")
+return {}`;
+
+        const importModulePaths = ['"@rbxts/services"'];
+        assert.ok(hasValidImportRequire(content, importModulePaths), 'Should recognize split pattern with type annotation');
+    });
+
+    test('Should reject malformed multiline import without require overwrite', () => {
+        const content = `
+local Import = require("@rbxts/services")
+local something = require("@SomeModule")
+return {}`;
+
+        const importModulePaths = ['"@rbxts/services"'];
+        assert.ok(!hasValidImportRequire(content, importModulePaths), 'Should reject import assignment when require overwrite is missing');
+    });
+
+    test('Should reject multiline import when configured path does not match', () => {
+        const content = `
+local Import = require("@rbxts/services")
+require = Import(script)
+local something = require("@SomeModule")
+return {}`;
+
+        const importModulePaths = ['"@rbxts/other"'];
+        assert.ok(!hasValidImportRequire(content, importModulePaths), 'Should reject split pattern for non-configured import path');
+    });
+
+    test('Should return correct line indexes for split import definition', () => {
+        const content = [
+            'local Import = require("@rbxts/services")',
+            'require = Import(script)',
+            'local something = require("@SomeModule")'
+        ].join('\n');
+
+        const importModulePaths = ['"@rbxts/services"'];
+        const lineIndexes = getImportRequireLineIndexes(content, importModulePaths);
+        assert.deepStrictEqual(lineIndexes, [0, 1], 'Should identify both split import lines');
+    });
+
+    test('Should detect split import when assignment has trailing type annotation', () => {
+        const content = [
+            'local Import = require((ReplicatedStorage:WaitForChild("cac_admin_abuse") :: any).Import) :: (any) -> typeof(require)',
+            'require = Import(script)',
+            'local something = require("@SomeModule")'
+        ].join('\n');
+
+        const importModulePaths = ['(ReplicatedStorage:WaitForChild("cac_admin_abuse") :: any).Import'];
+        assert.ok(hasValidImportRequire(content, importModulePaths), 'Should accept split import with typed assignment line');
+    });
+
+    test('Should detect single-line import with trailing annotation/comment', () => {
+        const content = [
+            'require = require("@rbxts/services")(script) :: typeof(require) -- keep typed',
+            'local something = require("@SomeModule")'
+        ].join('\n');
+
+        const importModulePaths = ['"@rbxts/services"'];
+        assert.ok(hasValidImportRequire(content, importModulePaths), 'Should accept single-line import with trailing metadata');
     });
 });

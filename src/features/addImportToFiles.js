@@ -66,16 +66,96 @@ function scanForFilesNeedingImport(dir, importModulePaths, ignoreDirectories, fi
 }
 
 /**
+ * Escapes regex metacharacters so configured import paths can be safely matched.
+ */
+function escapeRegExp(text) {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Normalizes configured import paths into a clean string array.
+ */
+function getImportPathsArray(importModulePaths) {
+    const pathsArray = Array.isArray(importModulePaths) ? importModulePaths : [importModulePaths];
+    return pathsArray
+        .filter(path => typeof path === 'string')
+        .map(path => path.trim())
+        .filter(path => path.length > 0);
+}
+
+/**
+ * Matches the legacy single-line override form: require = require(path)(script).
+ */
+function createSingleLineImportRegex(importPath) {
+    const escapedPath = escapeRegExp(importPath);
+    return new RegExp(
+        `^\\s*require\\s*=\\s*require\\s*\\(\\s*${escapedPath}\\s*\\)\\s*\\(\\s*script\\s*\\)(?:\\s*::.*)?(?:\\s*--.*)?\\s*$`
+    );
+}
+
+/**
+ * Matches the first line of split imports, capturing the assigned local variable name.
+ */
+function createImportAssignmentRegex(importPath) {
+    const escapedPath = escapeRegExp(importPath);
+    return new RegExp(
+        `^\\s*(?:local\\s+)?([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*require\\s*\\(\\s*${escapedPath}\\s*\\)(?:\\s*::.*)?(?:\\s*--.*)?\\s*$`
+    );
+}
+
+/**
+ * Matches the second line of split imports: require = <capturedVar>(script).
+ */
+function createRequireOverwriteRegex(varName) {
+    const escapedVarName = escapeRegExp(varName);
+    return new RegExp(
+        `^\\s*require\\s*=\\s*${escapedVarName}\\s*\\(\\s*script\\s*\\)(?:\\s*::.*)?(?:\\s*--.*)?\\s*$`
+    );
+}
+
+/**
+ * Returns line indexes for valid import override definitions in single-line or split form.
+ */
+function getImportRequireLineIndexes(content, importModulePaths) {
+    const lines = content.split('\n');
+    const matchedLineIndexes = new Set();
+    const assignmentCandidates = [];
+    const importPaths = getImportPathsArray(importModulePaths);
+
+    lines.forEach((line, lineIndex) => {
+        importPaths.forEach(importPath => {
+            if (createSingleLineImportRegex(importPath).test(line)) {
+                matchedLineIndexes.add(lineIndex);
+            }
+
+            const assignmentMatch = line.match(createImportAssignmentRegex(importPath));
+            if (assignmentMatch) {
+                assignmentCandidates.push({
+                    lineIndex,
+                    variableName: assignmentMatch[1]
+                });
+            }
+        });
+    });
+
+    assignmentCandidates.forEach(candidate => {
+        const overwriteRegex = createRequireOverwriteRegex(candidate.variableName);
+        const overwriteLineIndex = lines.findIndex(line => overwriteRegex.test(line));
+
+        if (overwriteLineIndex !== -1) {
+            matchedLineIndexes.add(candidate.lineIndex);
+            matchedLineIndexes.add(overwriteLineIndex);
+        }
+    });
+
+    return Array.from(matchedLineIndexes).sort((a, b) => a - b);
+}
+
+/**
  * Checks if a file has a valid import require definition
  */
 function hasValidImportRequire(content, importModulePaths) {
-    const pathsArray = Array.isArray(importModulePaths) ? importModulePaths : [importModulePaths];
-    return pathsArray.some(path => {
-        // Match the pattern: require = require(somepath)(script)
-        // The :: typeof(require) part is optional
-        const def = `require = require(${path})(script)`;
-        return content.includes(def);
-    });
+    return getImportRequireLineIndexes(content, importModulePaths).length > 0;
 }
 
 /**
@@ -259,4 +339,9 @@ function addImportToSingleFile(filePath, defaultImportModulePath, preferredImpor
     return true;
 }
 
-module.exports = { addImportToAllFiles, addImportToSingleFile, hasValidImportRequire };
+module.exports = {
+    addImportToAllFiles,
+    addImportToSingleFile,
+    hasValidImportRequire,
+    getImportRequireLineIndexes
+};
