@@ -15,7 +15,6 @@ export type Config = {
 	Debug: boolean?,
 	MaxSearchDepth: number?,
 	CaseSensitive: boolean?,
-	CircularDependencyDetection: boolean?,
 	DisableCache: boolean?,
 }
 

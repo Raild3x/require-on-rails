@@ -172,7 +172,17 @@ function getImportRequireLineIndexes(content, importModulePaths) {
 
     assignmentCandidates.forEach(candidate => {
         const overwriteRegex = createRequireOverwriteRegex(candidate.variableName);
-        const overwriteLineIndex = lines.findIndex(line => overwriteRegex.test(line));
+        // Restrict the search to the next non-empty line after the assignment.
+        // Scanning the whole file risks pairing with an unrelated
+        // `require = <var>(script)` that happens to share the same variable name.
+        let overwriteLineIndex = -1;
+        for (let i = candidate.lineIndex + 1; i < lines.length; i++) {
+            if (lines[i].trim() === '') continue;  // skip blank lines
+            if (overwriteRegex.test(lines[i])) {
+                overwriteLineIndex = i;
+            }
+            break; // stop after the first non-empty line regardless of match
+        }
 
         if (overwriteLineIndex !== -1) {
             matchedLineIndexes.add(candidate.lineIndex);

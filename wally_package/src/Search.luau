@@ -37,10 +37,12 @@ local function bfsFindPath(rootInstance: Instance, pathParts: { string }, config
 	debugLog(debug, "bfsFindPath:", table.concat(pathParts, "/"), "from", rootInstance.Name)
 
 	local queue: { { instance: Instance, depth: number } } = { { instance = rootInstance, depth = 1 } }
+	local head    = 1
 	local visited = {}
 
-	while #queue > 0 do
-		local current = table.remove(queue, 1) :: { instance: Instance, depth: number }
+	while head <= #queue do
+		local current = queue[head]
+		head += 1
 		if current.depth > maxDepth then break end
 		if visited[current.instance] then continue end
 		visited[current.instance] = true

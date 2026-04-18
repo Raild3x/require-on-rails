@@ -209,7 +209,6 @@ All options are passed to `RequireOnRails.create { … }`:
 | `Debug` | `boolean?` | `false` | Prints detailed resolution steps to the output. |
 | `MaxSearchDepth` | `number?` | `50` | Maximum folder depth for ambiguous searches. Does not apply to explicit absolute paths. |
 | `CaseSensitive` | `boolean?` | `true` | When `false`, path segments are matched case-insensitively. |
-| `CircularDependencyDetection` | `boolean?` | `true` | Detects and errors on circular `require` chains with a formatted chain trace. |
 | `DisableCache` | `boolean?` | `false` | When `true`, skips the module-path → instance lookup cache, re-resolving on every call. Native Luau `require()` still caches module execution results. |
 </details>
 

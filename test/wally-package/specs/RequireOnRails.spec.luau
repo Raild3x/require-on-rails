@@ -7,6 +7,7 @@ return function(t)
 	local describe = t.describe
 
 	local RequireOnRails = require(script.Parent.Parent.RequireOnRails)
+	local Import         = require(script.Parent.Fixtures.Import)
 
 	-- ── Pre-made fixture hierarchy ────────────────────────────────────────────────
 	--
@@ -15,19 +16,25 @@ return function(t)
 	-- cannot create requireable modules dynamically.
 	--
 	--  Fixtures/
-	--  └── RoR_TestRoot  (Folder)              ← "Root" ancestor key
-	--      ├── Context       (ModuleScript)    returns "context_sentinel"
-	--      ├── ModuleA       (ModuleScript)    returns "module_a"
-	--      ├── ModuleB       (ModuleScript)    returns "module_b"
-	--      ├── SubFolder     (Folder)
-	--      │   ├── ModuleC   (ModuleScript)    returns "module_c"
-	--      │   └── Nested    (Folder)
-	--      │       └── ModuleD (ModuleScript)  returns "module_d"--      ├── InitModule    (ModuleScript)    returns "init_module"  ← backed by init.luau
---      │   └── ChildOfInit (ModuleScript)  returns "child_of_init"	--      ├── _Index        (Folder)          auto-ignored by RoR (hardcoded name check)
-	--      │   └── IndexedModule (ModuleScript)
-	--      ├── Ignorable     (Folder)          ignored via IgnorePredicate in some tests
-	--      │   └── IgnorableModule (ModuleScript)
-	--      └── SharedName    (ModuleScript)    returns "root_shared"
+	--  ├── Import        (ModuleScript)        cache-busting helper; used by circular dep tests
+	--  ├── RoR_TestRoot  (Folder)              ← "Root" ancestor key
+	--  │   ├── Context       (ModuleScript)    returns "context_sentinel"
+	--  │   ├── ModuleA       (ModuleScript)    returns "module_a"
+	--  │   ├── ModuleB       (ModuleScript)    returns "module_b"
+	--  │   ├── SubFolder     (Folder)
+	--  │   │   ├── ModuleC   (ModuleScript)    returns "module_c"
+	--  │   │   └── Nested    (Folder)
+	--  │   │       └── ModuleD (ModuleScript)  returns "module_d"
+	--  │   ├── InitModule    (ModuleScript)    returns "init_module"  ← backed by init.luau
+	--  │   │   └── ChildOfInit (ModuleScript)  returns "child_of_init"
+	--  │   ├── _Index        (Folder)          auto-ignored by RoR (hardcoded name check)
+	--  │   │   └── IndexedModule (ModuleScript)
+	--  │   ├── Ignorable     (Folder)          ignored via IgnorePredicate in some tests
+	--  │   │   └── IgnorableModule (ModuleScript)
+	--  │   ├── CircDepA      (ModuleScript)    requires CircDepB through Import.__call  ┐ form a cycle
+	--  │   ├── CircDepB      (ModuleScript)    requires CircDepA through Import.__call  ┘
+	--  │   ├── YieldingModule (ModuleScript)   calls task.wait() then returns "yielding_module"
+	--  │   └── SharedName    (ModuleScript)    returns "root_shared"
 	--  └── RoR_OtherRoot (Folder)              ← "Other" ancestor key (multi-ancestor tests)
 	--      ├── ModuleE       (ModuleScript)    returns "module_e"
 	--      └── SharedName    (ModuleScript)    returns "other_shared"
@@ -45,6 +52,7 @@ return function(t)
 	local moduleD       = nested.ModuleD
 	local initModule    = root.InitModule
 	local childOfInit   = initModule.ChildOfInit
+	local yieldingModule = root.YieldingModule
 
 	-- Second ancestor (multi-ancestor tests)
 	local otherRoot = fixtures.RoR_OtherRoot
@@ -59,14 +67,15 @@ return function(t)
 			IgnorePredicate       = o.IgnorePredicate,
 			MaxSearchDepth        = o.MaxSearchDepth,
 			CaseSensitive         = o.CaseSensitive,
-			CircularDependencyDetection = o.CircularDependencyDetection,
 			DisableCache          = o.DisableCache,
 		}
 	end
 
 	-- Shorthand: create an import function using the default (or overridden) config.
+	-- Uses Import.create so that the active importer is available to fixture modules
+	-- that call back into RoR via Import.__call (e.g. CircDepA / CircDepB).
 	local function makeImport(contextInst: Instance?, overrides: { [string]: any }?)
-		return RequireOnRails.create(makeConfig(overrides))(contextInst or context)
+		return Import.create(makeConfig(overrides))(contextInst or context)
 	end
 
 
@@ -860,24 +869,80 @@ return function(t)
 		end)
 	end)
 
-	-- ── Circular dependency detection ─────────────────────────────────────────────
+	-- ── Circular dependencies ────────────────────────────────────────────────────
 	--
-	-- A true circular-dependency trigger requires a fixture module whose source
-	-- calls back into the RoR import function while it is being required.
-	-- ModuleScript.Source is read-only at runtime, so pre-made fixture files
-	-- cannot be written to create that re-entrant call.  The tests below
-	-- therefore cover what is verifiable: that the feature does not break normal
-	-- (non-circular) resolution when enabled or disabled.
+	-- RoR delegates to the native Roblox/Luau require() for all module execution.
+	-- Circular dependency detection is handled entirely by the engine, which throws
+	-- "Requested module was required recursively" when a cycle is detected.
+	--
+	-- CircDepA and CircDepB are fixture modules that each require the other through
+	-- RoR via Import.__call, forming a genuine mutual dependency cycle.
+	-- Import.reset() is called first to bust Luau's module cache so the fixture
+	-- bodies actually re-execute.
+	--
+	-- The concurrent-require tests verify that RoR's thin requireModule wrapper does
+	-- not introduce any cross-coroutine state that could break concurrent access.
+	-- Import.reset() also ensures YieldingModule's task.wait() fires each run.
 
-	describe("Circular dependency detection", function()
-		test("enabled: successful requires still work normally", function()
-			local importFn = makeImport(nil, { CircularDependencyDetection = true })
-			expect(importFn("@Root/ModuleA")).is("module_a")
+	describe("Circular dependencies", function()
+		test("a circular require chain throws an error", function()
+			-- Roblox detects the cycle and throws; RoR should not swallow it.
+			Import.reset()
+			local freshRoot = fixtures.RoR_TestRoot
+			Import.create({ Aliases = { Root = freshRoot } })(freshRoot.Context)
+			expect(function()
+				Import(freshRoot.Context)(freshRoot.CircDepA)
+			end).fails()
+		end)
+		
+		test("two concurrent requires of a yielding module do not error", function()
+			Import.reset()
+			local freshRoot = fixtures.RoR_TestRoot
+			local importFn = Import.create({ Aliases = { Root = freshRoot } })(freshRoot.Context)
+			local errors: { string } = {}
+			local results: { string } = {}
+			local done = 0
+
+			task.spawn(function()
+				local ok, val = pcall(function() return importFn(freshRoot.YieldingModule) end)
+				if ok then table.insert(results, val) else table.insert(errors, val) end
+				done += 1
+			end)
+			task.spawn(function()
+				local ok, val = pcall(function() return importFn(freshRoot.YieldingModule) end)
+				if ok then table.insert(results, val) else table.insert(errors, val) end
+				done += 1
+			end)
+
+			while done < 2 do task.wait() end
+
+			expect(#errors).is(0)
+			expect(#results).is(2)
+			expect(results[1]).is("yielding_module")
+			expect(results[2]).is("yielding_module")
 		end)
 
-		test("disabled: successful requires still work normally", function()
-			local importFn = makeImport(nil, { CircularDependencyDetection = false })
-			expect(importFn("@Root/ModuleA")).is("module_a")
+		test("two concurrent requires of the same non-yielding module do not error", function()
+			Import.reset()
+			local freshRoot = fixtures.RoR_TestRoot
+			local importFn = Import.create({ Aliases = { Root = freshRoot } })(freshRoot.Context)
+			local errors: { string } = {}
+			local done = 0
+
+			task.spawn(function()
+				local ok, err = pcall(function() importFn(freshRoot.ModuleA) end)
+				if not ok then table.insert(errors, err) end
+				done += 1
+			end)
+			task.spawn(function()
+				local ok, err = pcall(function() importFn(freshRoot.ModuleA) end)
+				if not ok then table.insert(errors, err) end
+				done += 1
+			end)
+
+			task.wait()
+			expect(#errors).is(0)
+			expect(done).is(2)
 		end)
 	end)
 

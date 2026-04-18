@@ -87,7 +87,8 @@ end
 	`@Svc/Foo` resolve to `@Root/Services/Foo`.
 
 	@param path    -- The original `@`-prefixed path
-	@param aliases -- Alias map (string key → target expansion) built from `Config.Ancestors`
+	@param aliases -- String-keyed alias map built by `CreateImportGenerator` from the
+	               -- merged `Config.Aliases` / `Config.Ancestors` tables
 	@return string -- Resolved path (unchanged if no alias matches)
 ]=]
 local function resolveAlias(path: string, aliases: { [string]: string }): string
@@ -112,14 +113,23 @@ end
 	@return ContextualImportGenerator
 ]=]
 local function CreateImportGenerator(_config: Config): ContextualImportGenerator
-	local config        = _config or {} :: Config
-	local debug          = config.Debug or false
-	local circularDetect = config.CircularDependencyDetection ~= false
-	local disableCache   = config.DisableCache == true
+	local config       = _config or {} :: Config
+	local debug        = config.Debug or false
+	local disableCache = config.DisableCache == true
 
 	-- Build the merged alias table. config.Aliases is the primary field; config.Ancestors
 	-- is accepted for backwards compatibility and is merged in (Aliases takes precedence).
-	assert(config.Aliases ~= nil or config.Ancestors ~= nil, "Aliases must be a table")
+	assert(
+		typeof(config.Aliases) == "table" or typeof(config.Ancestors) == "table",
+		"RequireOnRails: 'Aliases' must be a table (or provide the deprecated 'Ancestors' table)"
+	)
+	if config.Aliases ~= nil then
+		assert(typeof(config.Aliases) == "table", "RequireOnRails: 'Aliases' must be a table")
+	end
+	if config.Ancestors ~= nil then
+		assert(typeof(config.Ancestors) == "table", "RequireOnRails: 'Ancestors' must be a table")
+	end
+	
 	local rawAliases: { [string]: Instance | string }
 	if config.Aliases and config.Ancestors then
 		rawAliases = table.clone(config.Aliases)
@@ -164,37 +174,9 @@ local function CreateImportGenerator(_config: Config): ContextualImportGenerator
 
 	local unambiguousCache: ModuleCache = {}
 	local contextCache: ContextCache    = {}
-	local currentlyRequiring: { [ModuleScript]: boolean } = {}
-	local requireStack: { ModuleScript } = {}
 
-	--[=[
-		Builds a formatted error message showing the full require chain that
-		led to the circular dependency.
-	]=]
-	local function createCircularDependencyError(target: ModuleScript): string
-		local lines = {}
-		for i, m in requireStack do
-			table.insert(lines, `  {i}. {m:GetFullName()}`)
-		end
-		table.insert(lines, `  {#requireStack + 1}. {target:GetFullName()} <- CIRCULAR`)
-		return `Circular dependency detected!\nRequire chain:\n{table.concat(lines, "\n")}`
-	end
-
-	--[=[
-		Requires a ModuleScript with optional circular dependency detection.
-		Pushes the module onto `requireStack` for the duration of the call so
-		that error messages can show the full chain.
-	]=]
 	local function requireModule(module: ModuleScript): any
-		if circularDetect and currentlyRequiring[module] then
-			error(createCircularDependencyError(module))
-		end
-		table.insert(requireStack, module)
-		currentlyRequiring[module] = true
-		local result = require(module) :: any
-		currentlyRequiring[module] = nil
-		table.remove(requireStack)
-		return result
+		return require(module) :: any
 	end
 
 	--[=[
@@ -397,4 +379,3 @@ end
 return {
 	create = CreateImportGenerator,
 }
-
