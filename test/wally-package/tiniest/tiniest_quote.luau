@@ -1,4 +1,4 @@
--- From dphfox/tiniest, licenced under BSD
+-- From dphfox/tiniest, licensed under BSD
 --!strict
 
 local function tiniest_quote(x: unknown, given_indent_amount: number?): string

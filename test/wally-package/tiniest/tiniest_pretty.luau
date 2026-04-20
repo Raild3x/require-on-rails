@@ -1,4 +1,4 @@
--- From dphfox/tiniest, licenced under BSD
+-- From dphfox/tiniest, licensed under BSD
 --!strict
 
 local tiniest_plugin = require("./tiniest_plugin")

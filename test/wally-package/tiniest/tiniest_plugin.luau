@@ -1,4 +1,4 @@
--- From dphfox/tiniest, licenced under BSD
+-- From dphfox/tiniest, licensed under BSD
 --!strict
 
 export type Plugin = {
