@@ -115,6 +115,7 @@ function getCommonConfig() {
 }
 
 module.exports = {
+    DEFAULT_CONTEXTUAL_IMPORT_TEMPLATE,
     hasWorkspaceFolders,
     getWorkspaceRoot,
     requireWorkspaceRoot,

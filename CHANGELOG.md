@@ -37,6 +37,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 #### Fixed
 - **BeforeFirstRequire Placement**: Insertion with `BeforeFirstRequire` now skips existing contextual import lines, preventing those lines from being treated as the anchor require.
 - **Line Hiding Compatibility**: Multiline contextual import lines are correctly detected and hidden in production-like path variations.
+- **API Compatibility**: Reintroduced `getPerformanceStats` export in the Luau package as a deprecated compatibility stub to avoid a silent breaking change for existing consumers.
 
 ## [0.0.1] - 2024-12-19
 

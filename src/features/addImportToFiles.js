@@ -2,12 +2,12 @@ const fs = require('fs');
 const path = require('path');
 const vscode = require('vscode');
 const { print, warn } = require('../core/logger');
-const { getCommonConfig, scanDirectory, requireWorkspaceRoot } = require('../utils/workspaceUtils');
-
-const DEFAULT_CONTEXTUAL_IMPORT_TEMPLATE = [
-    'local Import = require({IMPORT_MODULE_PATH})',
-    'require = Import(script)'
-].join('\n');
+const {
+    DEFAULT_CONTEXTUAL_IMPORT_TEMPLATE,
+    getCommonConfig,
+    scanDirectory,
+    requireWorkspaceRoot
+} = require('../utils/workspaceUtils');
 
 /**
  * Main function to add import require definitions to files using custom aliases

@@ -55,7 +55,7 @@
 	```
 
 	```info
-	Due to a bug in luau, requiring the GeneratorModule and setting it to overwrite `require` in the same line can cause type inference issues.
+	Due to a bug in Luau, requiring the GeneratorModule and setting it to overwrite `require` in the same line can cause type inference issues.
 	To avoid this, require the GeneratorModule in a separate line and then call it to generate the `require` function as shown in the example above.
 	```
 ]=]
@@ -87,8 +87,8 @@ end
 	`@Svc/Foo` resolve to `@Root/Services/Foo`.
 
 	@param path    -- The original `@`-prefixed path
-	@param aliases -- String-keyed alias map built by `CreateImportGenerator` from the
-	               -- merged `Config.Aliases` / `Config.Ancestors` tables
+	@param aliases -- String-keyed alias map produced by `CreateImportGenerator`
+	               -- after validating merged alias configuration
 	@return string -- Resolved path (unchanged if no alias matches)
 ]=]
 local function resolveAlias(path: string, aliases: { [string]: string }): string
@@ -181,16 +181,26 @@ local function CreateImportGenerator(_config: Config): ContextualImportGenerator
 
 	--[=[
 		Returns the `ModuleCache` for `context`, creating and registering one if needed.
-		Connects an `AncestryChanged` listener to flush the cache when the
-		context is removed from the data model.
+		Connects an `AncestryChanged` listener to flush and remove cache state
+		when the context is detached from the data model.
 	]=]
 	local function getCacheForContext(context: Instance): ModuleCache
 		if contextCache[context] then return contextCache[context] end
 		local newCache: ModuleCache = {}
 		contextCache[context] = newCache
-		context.AncestryChanged:Connect(function()
-			debugLog(debug, "Cache cleared for", context.Name)
-			for k in newCache do newCache[k] = nil end
+
+		local ancestryConnection: RBXScriptConnection
+		ancestryConnection = context.AncestryChanged:Connect(function(_, newParent)
+			if newParent ~= nil then
+				return
+			end
+
+			debugLog(debug, "Cache cleared for detached context", context.Name)
+			for k in newCache do
+				newCache[k] = nil
+			end
+			contextCache[context] = nil
+			ancestryConnection:Disconnect()
 		end)
 		return newCache
 	end
@@ -311,7 +321,7 @@ local function CreateImportGenerator(_config: Config): ContextualImportGenerator
 			local pathParts = string.split(resolvedTarget:sub(2), "/")
 			local firstSeg  = pathParts[1]
 
-			-- "." as the first segment is always invalid
+			-- ".." as the first segment is always invalid
 			assert(firstSeg ~= "..", `"{resolvedTarget}" is not a valid path: ".." cannot be the first segment. Use an ancestor key or a module name.`)
 
 			-- ── Absolute path: @AncestorKey/rest/of/path ─────────────────
@@ -378,4 +388,8 @@ end
 
 return {
 	create = CreateImportGenerator,
+	getPerformanceStats = function()
+		warn("[RequireOnRails] getPerformanceStats is deprecated and currently returns nil.")
+		return nil
+	end,
 }
