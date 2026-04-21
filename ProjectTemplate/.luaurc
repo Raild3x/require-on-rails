@@ -1,10 +1,11 @@
 {
     "aliases": {
     },
-    "languageMode": "nonstrict",
+    "languageMode": "strict",
     "lint": {
         "*": true,
-        "BuiltinGlobalWrite": false
+        "BuiltinGlobalWrite": false,
+        "ImplicitReturn": false
     },
     "typeErrors": true
 }
