@@ -210,7 +210,7 @@ function createContextualImportSnippetFromTemplate(importModulePath, template) {
             ? template
             : DEFAULT_CONTEXTUAL_IMPORT_TEMPLATE;
 
-    return templateToUse.replace('{IMPORT_MODULE_PATH}', importModulePath);
+    return templateToUse.replaceAll('{IMPORT_MODULE_PATH}', importModulePath);
 }
 
 /**
