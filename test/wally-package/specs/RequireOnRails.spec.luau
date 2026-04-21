@@ -113,6 +113,18 @@ return function(t)
 			end).fails_with("reserved")
 		end)
 
+		test("non-string alias keys error at creation time", function()
+			expect(function()
+				RequireOnRails.create({ Aliases = { [1] = root } })
+			end).fails_with("non-empty strings")
+		end)
+
+		test("empty alias keys error at creation time", function()
+			expect(function()
+				RequireOnRails.create({ Aliases = { [""] = root } })
+			end).fails_with("non-empty strings")
+		end)
+
 		test("Ancestors field is accepted as a backwards-compatible alternative to Aliases", function()
 			local importFn = RequireOnRails.create({ Ancestors = { Root = root } })(context)
 			expect(importFn("@Root/ModuleA")).is("module_a")

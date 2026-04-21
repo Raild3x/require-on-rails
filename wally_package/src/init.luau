@@ -148,6 +148,10 @@ local function CreateImportGenerator(_config: Config): ContextualImportGenerator
 
 	-- First pass: separate Instance entries (ancestor roots) from string entries (aliases).
 	for key, value in rawAliases do
+		assert(
+			typeof(key) == "string" and key ~= "",
+			"RequireOnRails: alias table keys must be non-empty strings"
+		)
 		assert(not table.find(RESERVED_ALIASES, key), `Alias key "{key}" is reserved by Roblox and cannot be used`)
 		if typeof(value) == "Instance" then
 			validAncestors[key] = value
@@ -191,10 +195,6 @@ local function CreateImportGenerator(_config: Config): ContextualImportGenerator
 
 		local ancestryConnection: RBXScriptConnection
 		ancestryConnection = context.AncestryChanged:Connect(function(_, newParent)
-			if newParent ~= nil then
-				return
-			end
-
 			debugLog(debug, "Cache cleared for detached context", context.Name)
 			for k in newCache do
 				newCache[k] = nil
@@ -389,7 +389,6 @@ end
 return {
 	create = CreateImportGenerator,
 	getPerformanceStats = function()
-		warn("[RequireOnRails] getPerformanceStats is deprecated and currently returns nil.")
-		return nil
+		error("[RequireOnRails] getPerformanceStats is deprecated")
 	end,
 }
