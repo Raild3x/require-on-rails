@@ -2,7 +2,7 @@
   "name": "require-on-rails",
   "displayName": "RequireOnRails",
   "description": "An opinionated Roblox Luau utility extension to simplify working with complex codebase hierarchies",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "publisher": "Raild3x",
   "icon": "images/icon_v2.png",
   "repository": {
@@ -99,6 +99,11 @@
             "type": "string"
           }
         },
+        "require-on-rails.contextualImportTemplate": {
+          "type": "string",
+          "default": "local Import = require({IMPORT_MODULE_PATH})\nrequire = Import(script)",
+          "description": "Template used when inserting contextual import code. Must include {IMPORT_MODULE_PATH} placeholder."
+        },
         "require-on-rails.preferredImportPlacement": {
           "type": "string",
           "default": "TopOfFile",
@@ -162,8 +167,8 @@
     }
   },
   "scripts": {
-    "test": "node ./test/runners/runTest.js",
-    "test:fast": "node ./test/runners/runFastTest.js",
+    "test": "node ./test/vs-code-extension/runners/runTest.js",
+    "test:fast": "node ./test/vs-code-extension/runners/runFastTest.js",
     "pretest": "npm run compile",
     "compile": "echo TS conversion disabled",
     "vscode:prepublish": "npm run compile",

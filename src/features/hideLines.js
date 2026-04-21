@@ -2,18 +2,17 @@ const vscode = require('vscode');
 const path = require('path');
 const fs = require('fs');
 const { print } = require('../core/logger');
-const { addImportToSingleFile, hasValidImportRequire } = require('./addImportToFiles');
+const {
+    addImportToSingleFile,
+    hasValidImportRequire,
+    getImportRequireLineIndexes
+} = require('./addImportToFiles');
 
 // Store decoration types globally to properly dispose of them
 let currentDecorationType = null;
 
 // Store the current editor document to avoid unnecessary reprocessing
 let currentEditorDocument = null;
-
-// Utility to escape regex special characters in a string
-function escapeRegExp(string) {
-    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 
 function hideLines(editor) {
     const editorLang = editor.document.languageId;
@@ -34,10 +33,10 @@ function hideLines(editor) {
 
 
     const config = vscode.workspace.getConfiguration('require-on-rails');
-    const importModulePaths = config.get("importModulePaths");
+    const importModulePaths = config.get("importModulePaths", []);
     const pathsArray = Array.isArray(importModulePaths) ? importModulePaths : [importModulePaths];
     const defaultImportModulePath = pathsArray[0];
-    const tryToAddImportRequire = config.get("tryToAddImportRequire");
+    const tryToAddImportRequire = config.get("tryToAddImportRequire", true);
 
     // Use the centralized function to check for valid import require definitions
     const hasValidImport = hasValidImportRequire(text, importModulePaths);
@@ -65,6 +64,11 @@ function hideLines(editor) {
             if (selection === 'Yes') {
                 const filePath = editor.document.fileName;
                 const preferredImportPlacement = config.get("preferredImportPlacement");
+
+                if (!defaultImportModulePath) {
+                    vscode.window.showWarningMessage('RequireOnRails: No import module path configured.');
+                    return;
+                }
                 
                 // Use the centralized addImportToSingleFile function
                 const success = addImportToSingleFile(filePath, defaultImportModulePath, preferredImportPlacement);
@@ -81,21 +85,16 @@ function hideLines(editor) {
     }
 
     // Create new decoration type
+    const importOpacity = config.get("importOpacity", 0.45);
     currentDecorationType = vscode.window.createTextEditorDecorationType({
-        opacity: config.get("importOpacity").toString(), // Makes the text nearly invisible        
+        opacity: importOpacity.toString(), // Makes the text nearly invisible
     });
 
+    const seleneComment = '-- selene: allow(incorrect_standard_library_use)';
+    const importLineIndexes = new Set(getImportRequireLineIndexes(text, importModulePaths));
     const linesToHide = [];
-    // Build regex dynamically based on all importModulePaths, escaping special characters
-    const pathPatterns = pathsArray.map(path => 
-        escapeRegExp(`require = require(${path})(script)`)
-    ).join('|');
-    const regex = new RegExp(
-        `-- selene: allow\\(incorrect_standard_library_use\\)|${pathPatterns}`
-    );
-
     text.split('\n').forEach((line, index) => {
-        if (regex.test(line)) {
+        if (line.trim() === seleneComment || importLineIndexes.has(index)) {
             const range = new vscode.Range(index, 0, index, line.length);
             linesToHide.push(range);
         }

@@ -4,6 +4,45 @@ All notable changes to the "require-on-rails" extension will be documented in th
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [0.2.0] - 2026-04-16
+
+### Luau Module (v0.2.0)
+
+#### Breaking Changes
+- **`Ancestors` renamed to `Aliases`**: The primary config field is now `Aliases: { [string]: Instance | string }`. `Ancestors` is retained as a backwards-compatible optional field that merges into `Aliases` at `create()` time (`Aliases` wins on key conflicts). Both Instance-valued entries (ancestor roots) and string-valued entries (path expansion aliases) now live in a single `Aliases` table.
+
+#### Added
+- **Parent-directory traversal (`..`) in paths**: `..` segments are now supported anywhere after the first segment in both absolute and ambiguous paths.  
+  - Absolute: `@AncestorKey/child/../../sibling` — traversal starts at the registered ancestor and `..` climbs via `.Parent`.
+  - Ambiguous + further segments: `@ModuleName/../sibling` — the module is found by search first; `..` and any remaining segments are then traversed from the resolved instance.
+  - `@../…` (bare `..` as the very first segment) is explicitly rejected with a clear error.
+- **`DisableCache` config flag**: Setting `DisableCache = true` in the config table skips the module-path → instance lookup cache, forcing fresh resolution on every `require()` call. Useful for hot-reload scenarios and debugging. Note: native Luau `require()` still caches module execution results regardless.
+- **Reserved ancestor-key validation**: `create()` now errors immediately if `"self"` or `"game"` are used as ancestor keys, since these conflict with Roblox's built-in `@self` and `@game` require-by-string aliases.
+- **Ambiguous path with additional segments**: Ambiguous single-name paths (`@ModuleName`) now accept additional path segments after the resolved instance (`@ModuleName/child`, `@ModuleName/../../sibling`), using the same traversal logic as absolute paths.
+
+#### Fixed
+- **Alias key validation**: `create()` now asserts immediately that every key in the `Aliases` (and `Ancestors`) table is a non-empty string. Numeric keys (e.g. `[1]`) and empty-string keys (`[""]`) are rejected with a clear error rather than being silently accepted and then never matching any path segment.
+
+
+### Extension
+
+#### Added
+- **Configurable Contextual Import Template**: New `require-on-rails.contextualImportTemplate` setting controls exactly how contextual import code is inserted. The template must include `{IMPORT_MODULE_PATH}`.
+- **Template Validation Warning**: The extension now warns when `contextualImportTemplate` is missing `{IMPORT_MODULE_PATH}` and falls back to a safe default template.
+- **Multiline Import Insertion Default**: Contextual imports now insert as multiline by default:
+	- `local Import = require(<path>)`
+	- `require = Import(script)`
+
+#### Changed
+- **Lenient Import Detection**: Import detection now supports both single-line and multiline contextual import forms with optional trailing type annotations/comments.
+- **Core-Usage Fallback Detection**: Detection and line hiding can match contextual import core usage even when the runtime/path text differs from configured `importModulePaths`.
+- **Preview Output**: "Show Files" import preview now displays the configured contextual import template output instead of a hardcoded single-line form.
+
+#### Fixed
+- **BeforeFirstRequire Placement**: Insertion with `BeforeFirstRequire` now skips existing contextual import lines, preventing those lines from being treated as the anchor require.
+- **Line Hiding Compatibility**: Multiline contextual import lines are correctly detected and hidden in production-like path variations.
+- **API Compatibility**: Reintroduced `getPerformanceStats` export in the Luau package as a deprecated compatibility stub to avoid a silent breaking change for existing consumers.
+
 ## [0.0.1] - 2024-12-19
 
 ### Added

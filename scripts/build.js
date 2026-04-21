@@ -1,3 +1,26 @@
+/**
+ * build.js
+ *
+ * Pre-publication build pipeline for the RequireOnRails VS Code extension.
+ *
+ * Responsibilities:
+ *   1. Version bump  — Interactively prompts for a semver bump type (patch /
+ *      minor / major / skip), updates `package.json`, and stamps the new
+ *      version into `CHANGELOG.md` (promoting the `[Unreleased]` section).
+ *   2. Compilation   — Runs `npm run compile` (TypeScript transpilation; a
+ *      no-op when TS is disabled, logged as a warning rather than an error).
+ *   3. Testing       — Runs the full `npm test` suite; a failure aborts the
+ *      build so a broken package is never produced.
+ *   4. Packaging     — Invokes `vsce package` to produce the distributable
+ *      `.vsix` artifact in the workspace root.
+ *
+ * Usage:
+ *   node scripts/build.js
+ *
+ * Exports (for unit-testing helpers independently):
+ *   build, incrementVersion, parseVersion
+ */
+
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');

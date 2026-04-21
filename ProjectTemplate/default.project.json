@@ -1,5 +1,6 @@
 {
     "name": "Roblox_Project",
+    "emitLegacyScripts": false,
     "globIgnorePaths": [
         "**/.package-lock.json",
         "**/start.server.luau",
@@ -30,6 +31,9 @@
                 },
                 "Import": {
                     "$path": "src/Import.luau"
+                },
+                "Assets": {
+                    "$path": "Assets/Shared"
                 }
             }
         },
@@ -65,18 +69,18 @@
             }
         },
         "ServerStorage": {
-            "$className": "ServerStorage"
+            "$className": "ServerStorage",
+            "src": {
+                "$className": "Folder",
+                "Assets": {
+                    "$path": "Assets/Server"
+                }
+            }
         },
         "StarterPlayer": {
             "$className": "StarterPlayer",
-            "StarterPlayerScripts": {
-                "$className": "StarterPlayerScripts",
-                "src": {
-                    "$className": "Folder",
-                    "Client_Bootstrapper": {
-                        "$path": "src/Client/start.client.luau"
-                    }
-                }
+            "Client_Bootstrapper": {
+                "$path": "src/Client/start.client.luau"
             }
         },
         "HttpService": {

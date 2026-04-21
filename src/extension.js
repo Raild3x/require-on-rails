@@ -175,6 +175,7 @@ function registerCommand(context, commandId, handler) {
 let debounceTimer = null;
 let debouncePending = false;
 let isGeneratingAliases = false;
+const CONTEXTUAL_IMPORT_PLACEHOLDER = '{IMPORT_MODULE_PATH}';
 
 function debouncedGenerateFileAliases() {
     if (isGeneratingAliases) return; // Prevent recursive calls
@@ -195,8 +196,23 @@ function debouncedGenerateFileAliases() {
     }, 500);
 }
 
+function validateContextualImportTemplate(template, showWarning = true) {
+    const isValid =
+        typeof template === 'string' &&
+        template.includes(CONTEXTUAL_IMPORT_PLACEHOLDER);
+
+    if (!isValid && showWarning) {
+        vscode.window.showWarningMessage(
+            `RequireOnRails: contextualImportTemplate must include ${CONTEXTUAL_IMPORT_PLACEHOLDER}. Falling back to default template.`
+        );
+    }
+
+    return isValid;
+}
+
 function activate(context) {
     const config = vscode.workspace.getConfiguration('require-on-rails');
+    const contextualImportTemplate = config.get('contextualImportTemplate', '');
     
     // Create output channel for logging
     outputChannel = vscode.window.createOutputChannel('RequireOnRails');
@@ -205,6 +221,21 @@ function activate(context) {
     
     print('RequireOnRails extension activated');
     print(config);
+
+    validateContextualImportTemplate(contextualImportTemplate, true);
+
+    const configChangeListener = vscode.workspace.onDidChangeConfiguration((event) => {
+        if (!event.affectsConfiguration('require-on-rails.contextualImportTemplate')) {
+            return;
+        }
+
+        const updatedTemplate = vscode.workspace
+            .getConfiguration('require-on-rails')
+            .get('contextualImportTemplate', '');
+
+        validateContextualImportTemplate(updatedTemplate, true);
+    });
+    context.subscriptions.push(configChangeListener);
     
     // Check if workspace folders exist before accessing
     if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
