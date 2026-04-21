@@ -203,7 +203,7 @@ All options are passed to `RequireOnRails.create { … }`:
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `Aliases` | `{ [string]: Instance \| string }` | *(required)* | Maps keys to ancestor root instances or short string aliases. String values expand to another key in the same table (e.g. `R = "Root"` makes `@R/Foo` resolve as `@Root/Foo`; `Svc = "Root/Services"` supports sub-path prefixes). Keys `"self"` and `"game"` are reserved. All ambiguous modules should be descendant of one of these values. |
+| `Aliases` | `{ [string]: Instance \| string }` | *(required)* | Maps keys to ancestor root instances or short string aliases. String values expand to another key in the same table (e.g. `R = "Root"` makes `@R/Foo` resolve as `@Root/Foo`; `Svc = "Root/Services"` supports sub-path prefixes). All keys must be non-empty strings — numeric keys or an empty string key will error at `create()` time. Keys `"self"` and `"game"` are reserved. All ambiguous modules should be descendant of one of these values. |
 | `Ancestors` | `{ [string]: Instance \| string }?` | `nil` | **Deprecated.** Accepted for backwards compatibility; merged into `Aliases` at `create()` time (`Aliases` takes precedence on key conflicts). Prefer `Aliases` for new code. |
 | `IgnorePredicate` | `((Instance) -> boolean)?` | `nil` | Called on each container during search; return `true` to skip that subtree. |
 | `Debug` | `boolean?` | `false` | Prints detailed resolution steps to the output. |

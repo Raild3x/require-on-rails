@@ -4,9 +4,9 @@ All notable changes to the "require-on-rails" extension will be documented in th
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-## [0.1.4] - 2026-04-16
+## [0.2.0] - 2026-04-16
 
-### Luau Module (v0.1.6)
+### Luau Module (v0.2.0)
 
 #### Breaking Changes
 - **`Ancestors` renamed to `Aliases`**: The primary config field is now `Aliases: { [string]: Instance | string }`. `Ancestors` is retained as a backwards-compatible optional field that merges into `Aliases` at `create()` time (`Aliases` wins on key conflicts). Both Instance-valued entries (ancestor roots) and string-valued entries (path expansion aliases) now live in a single `Aliases` table.
@@ -19,6 +19,10 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - **`DisableCache` config flag**: Setting `DisableCache = true` in the config table skips the module-path → instance lookup cache, forcing fresh resolution on every `require()` call. Useful for hot-reload scenarios and debugging. Note: native Luau `require()` still caches module execution results regardless.
 - **Reserved ancestor-key validation**: `create()` now errors immediately if `"self"` or `"game"` are used as ancestor keys, since these conflict with Roblox's built-in `@self` and `@game` require-by-string aliases.
 - **Ambiguous path with additional segments**: Ambiguous single-name paths (`@ModuleName`) now accept additional path segments after the resolved instance (`@ModuleName/child`, `@ModuleName/../../sibling`), using the same traversal logic as absolute paths.
+
+#### Fixed
+- **Alias key validation**: `create()` now asserts immediately that every key in the `Aliases` (and `Ancestors`) table is a non-empty string. Numeric keys (e.g. `[1]`) and empty-string keys (`[""]`) are rejected with a clear error rather than being silently accepted and then never matching any path segment.
+
 
 ### Extension
 
