@@ -41,14 +41,6 @@
       {
         "command": "require-on-rails.checkForUpdates",
         "title": "Check for RequireOnRails Package Updates"
-      },
-      {
-        "command": "require-on-rails.checkRobloxYml",
-        "title": "Check and Fix roblox.yml Files"
-      },
-      {
-        "command": "require-on-rails.generateRobloxYml",
-        "title": "Generate roblox.yml with Selene"
       }
     ],
     "configuration": {
@@ -119,11 +111,6 @@
           ],
           "description": "Controls where the import require definition is placed when automatically added to files"
         },
-        "require-on-rails.addSeleneCommentToImport": {
-          "type": "boolean",
-          "default": false,
-          "description": "Whether to add a comment to the import require definition to disable Selene warnings for that line."
-        },
         "require-on-rails.directoriesToScan": {
           "type": "array",
           "default": [
@@ -162,6 +149,14 @@
           "type": "string",
           "default": "",
           "description": "Version to skip update notifications for (set automatically when user clicks 'Don't Show Again')"
+        },
+        "require-on-rails.onAliasesRegenerated": {
+          "type": "array",
+          "default": [],
+          "description": "Shell commands to run after aliases are regenerated. Each command is executed from the workspace root.",
+          "items": {
+            "type": "string"
+          }
         }
       }
     }

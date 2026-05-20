@@ -108,7 +108,6 @@ function getCommonConfig() {
         importModulePaths: config.get('importModulePaths') || [],
         tryToAddImportRequire: config.get('tryToAddImportRequire', true),
         preferredImportPlacement: config.get('preferredImportPlacement', 'TopOfFile'),
-        addSeleneCommentToImport: config.get('addSeleneCommentToImport', false),
         importOpacity: config.get('importOpacity', 0.45),
         contextualImportTemplate: config.get('contextualImportTemplate', DEFAULT_CONTEXTUAL_IMPORT_TEMPLATE)
     };

@@ -8,7 +8,6 @@ const { downloadLuauModule } = require('./commands/downloadLuauModule');
 const { addImportToAllFiles } = require('./features/addImportToFiles');
 const { setOutputChannel, print, warn, error } = require('./core/logger');
 const { checkForPackageUpdatesWithSkip, checkForPackageUpdates } = require('./features/packageUpdateChecker');
-const { processRobloxYml, checkAndOfferSeleneGeneration } = require('./utils/yamlUtils');
 
 let isActive = false;
 let statusBarItem;
@@ -50,17 +49,6 @@ function enableWatchers() {
     createWatcher('**/settings.jsonc', true, () => {
         print('settings.jsonc changed, regenerating aliases...');
         debouncedGenerateFileAliases();
-    });
-    createWatcher('**/roblox.yml', true, (data) => {
-        print('roblox.yml changed, checking require configuration...', data.path);
-        processRobloxYml(data.fsPath);
-    });
-    createWatcher('**/selene.toml', true, (data) => {
-        print('selene.toml changed, checking for roblox.yml...', data.path);
-        if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
-            const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
-            checkAndOfferSeleneGeneration(workspaceRoot);
-        }
     });
 }
 
@@ -132,7 +120,6 @@ function enableExtensionFeatures() {
     enableEventListeners();
 
     generateFileAliases();
-    scanAndProcessRobloxYmlFiles();
     setStatusBarText();
 }
 
@@ -287,36 +274,6 @@ function activate(context) {
         }
     });
 
-    registerCommand(context, 'require-on-rails.checkRobloxYml', () => {
-        if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
-            vscode.window.showWarningMessage('RequireOnRails: Please open a folder first.');
-            return;
-        }
-        scanAndProcessRobloxYmlFiles();
-        vscode.window.showInformationMessage('RequireOnRails: Checked and processed roblox.yml files.');
-    });
-
-    registerCommand(context, 'require-on-rails.generateRobloxYml', async () => {
-        if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
-            vscode.window.showWarningMessage('RequireOnRails: Please open a folder first.');
-            return;
-        }
-        
-        const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
-        const { generateSeleneConfig } = require('./utils/yamlUtils');
-        
-        try {
-            const success = await generateSeleneConfig(workspaceRoot);
-            if (success) {
-                vscode.window.showInformationMessage('RequireOnRails: Successfully generated and configured roblox.yml!');
-            } else {
-                vscode.window.showErrorMessage('RequireOnRails: Failed to generate roblox.yml. Please check that selene is installed and accessible.');
-            }
-        } catch (err) {
-            vscode.window.showErrorMessage(`RequireOnRails: Error generating roblox.yml: ${err.message}`);
-        }
-    });
-
     // Clean up on deactivate
     context.subscriptions.push({
         dispose: () => {
@@ -336,40 +293,6 @@ function deactivate() {
     disableExtensionFeatures();
 }
 
-//----------------------------------------------------------------------------------------------
-// --- roblox.yml Processing ---
-
-async function scanAndProcessRobloxYmlFiles() {
-    if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
-        return;
-    }
-
-    const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
-
-    try {
-        print('Scanning for existing roblox.yml files...');
-        const robloxYmlFiles = await vscode.workspace.findFiles('**/roblox.yml', '**/node_modules/**');
-        
-        if (robloxYmlFiles.length === 0) {
-            print('No roblox.yml files found in workspace');
-            
-            // Check if there's a selene.toml but no roblox.yml
-            await checkAndOfferSeleneGeneration(workspaceRoot);
-        } else {
-            print(`Found ${robloxYmlFiles.length} roblox.yml file(s), processing...`);
-            
-            for (const file of robloxYmlFiles) {
-                processRobloxYml(file.fsPath);
-            }
-            
-            print('Finished processing roblox.yml files');
-        }
-    } catch (err) {
-        error('Failed to scan for roblox.yml files:', err.message);
-    }
-}
-
-//----------------------------------------------------------------------------------------------
 
 module.exports = {
 	activate,

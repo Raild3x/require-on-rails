@@ -16,7 +16,6 @@ function createMockConfig(overrides = {}) {
         tryToAddImportRequire: true,
         importOpacity: 0.45,
         preferImportPlacement: 'BeforeFirstRequire',
-        addSeleneCommentToImport: false, // Add the missing configuration property
         manualAliases: {
             '@Server': 'src/Server',
             '@Client': 'src/Client', 

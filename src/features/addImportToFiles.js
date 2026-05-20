@@ -318,22 +318,8 @@ function addImportToSingleFile(filePath, defaultImportModulePath, preferredImpor
         getImportRequireLineIndexes(content, [defaultImportModulePath])
     );
     
-    const config = getCommonConfig();
-    const { addSeleneCommentToImport } = config;
-    
-    // Check if selene.toml exists in workspace
-    const workspaceFolder = vscode.workspace.workspaceFolders[0];
-    const hasSeleneConfig = workspaceFolder && 
-        fs.existsSync(path.join(workspaceFolder.uri.fsPath, 'selene.toml'));
-    
-    const seleneComment = '-- selene: allow(incorrect_standard_library_use)';
     const importRequire = createContextualImportSnippetFromTemplate(defaultImportModulePath, contextualImportTemplate);
-    
-    // Check if selene comment already exists
-    const hasSeleneComment = lines.some(line => 
-        line.trim() === seleneComment
-    );
-    
+
     let insertLine = 0;
 
     print("Pref Import:", preferredImportPlacement)
@@ -395,9 +381,6 @@ function addImportToSingleFile(filePath, defaultImportModulePath, preferredImpor
     
     // Prepare the text to insert
     let textToInsert = '';
-    if (addSeleneCommentToImport && hasSeleneConfig && !hasSeleneComment) {
-        textToInsert += seleneComment + '\n';
-    }
     textToInsert += importRequire + '\n';
     
     // Insert the text
