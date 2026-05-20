@@ -180,6 +180,43 @@ function scanDir(dir, rootDir, supportedExtensions, ignorePatterns, ignoreList, 
 }
 
 
+// Serialization state for post-regeneration commands.
+// Only one batch of commands runs at a time; if another regeneration fires while commands
+// are in-flight, the latest request is queued (previous pending run is dropped).
+let _commandsInFlight = false;
+let _pendingRun = null; // { commands: string[], workspaceRoot: string } | null
+
+function _runCommandsSerial(commands, workspaceRoot) {
+    let index = 0;
+    function runNext() {
+        if (index >= commands.length) {
+            _commandsInFlight = false;
+            if (_pendingRun) {
+                const { commands: nextCmds, workspaceRoot: nextRoot } = _pendingRun;
+                _pendingRun = null;
+                _runCommandsSerial(nextCmds, nextRoot);
+            }
+            return;
+        }
+        const command = commands[index++];
+        exec(command, { cwd: workspaceRoot }, (err) => {
+            if (err) error(`onAliasesRegenerated command failed: "${command}"`, err.message);
+            else print(`onAliasesRegenerated: ran "${command}"`);
+            runNext();
+        });
+    }
+    _commandsInFlight = true;
+    runNext();
+}
+
+function _scheduleAliasCommands(commands, workspaceRoot) {
+    if (_commandsInFlight) {
+        _pendingRun = { commands, workspaceRoot };
+        return;
+    }
+    _runCommandsSerial(commands, workspaceRoot);
+}
+
 // Main function to generate file aliases
 function generateFileAliases() {
     const config = vscode.workspace.getConfiguration(extenionName);
@@ -272,17 +309,15 @@ function generateFileAliases() {
     fs.writeFileSync(luaurcPath, luaurcString);
 
     // Run post-regeneration scripts (user settings only; skipped in untrusted workspaces)
-    const onAliasesRegenerated = config.get('onAliasesRegenerated') || [];
+    const rawAliasCommands = config.get('onAliasesRegenerated');
+    const onAliasesRegenerated = Array.isArray(rawAliasCommands)
+        ? rawAliasCommands.filter(c => typeof c === 'string' && c.length > 0)
+        : [];
     if (onAliasesRegenerated.length > 0) {
         if (!vscode.workspace.isTrusted) {
             warn('onAliasesRegenerated: skipping commands in untrusted workspace');
         } else {
-            for (const command of onAliasesRegenerated) {
-                exec(command, { cwd: workspaceRoot }, (err) => {
-                    if (err) error(`onAliasesRegenerated command failed: "${command}"`, err.message);
-                    else print(`onAliasesRegenerated: ran "${command}"`);
-                });
-            }
+            _scheduleAliasCommands(onAliasesRegenerated, workspaceRoot);
         }
     }
 }

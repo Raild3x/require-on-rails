@@ -265,6 +265,10 @@ function activate(context) {
         addImportToAllFiles();
     });
 
+    registerCommand(context, 'require-on-rails.regenerateAliases', () => {
+        generateFileAliases();
+    });
+
     registerCommand(context, 'require-on-rails.checkForUpdates', async () => {
         if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
             const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
