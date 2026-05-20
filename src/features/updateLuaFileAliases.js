@@ -3,7 +3,6 @@ const path = require('path');
 const { exec } = require('child_process');
 const vscode = require('vscode');
 const { print, warn, error } = require('../core/logger');
-const { requireWorkspaceRoot, getCommonConfig } = require('../utils/workspaceUtils');
 
 const extenionName = 'require-on-rails';
 const supportedExtensions = ['.lua', '.luau'];
@@ -272,13 +271,19 @@ function generateFileAliases() {
     const luaurcString = JSON.stringify(finalLuaurc, null, 4);
     fs.writeFileSync(luaurcPath, luaurcString);
 
-    // Run post-regeneration scripts
+    // Run post-regeneration scripts (user settings only; skipped in untrusted workspaces)
     const onAliasesRegenerated = config.get('onAliasesRegenerated') || [];
-    for (const command of onAliasesRegenerated) {
-        exec(command, { cwd: workspaceRoot }, (err) => {
-            if (err) error(`onAliasesRegenerated command failed: "${command}"`, err.message);
-            else print(`onAliasesRegenerated: ran "${command}"`);
-        });
+    if (onAliasesRegenerated.length > 0) {
+        if (!vscode.workspace.isTrusted) {
+            warn('onAliasesRegenerated: skipping commands in untrusted workspace');
+        } else {
+            for (const command of onAliasesRegenerated) {
+                exec(command, { cwd: workspaceRoot }, (err) => {
+                    if (err) error(`onAliasesRegenerated command failed: "${command}"`, err.message);
+                    else print(`onAliasesRegenerated: ran "${command}"`);
+                });
+            }
+        }
     }
 }
 
