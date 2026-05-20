@@ -245,4 +245,127 @@ suite('File Alias Generation Tests', () => {
             }
         }
     });
+
+    // --- ignoreDirectories pattern tests ---
+
+    test('ignoreDirectories: name-only pattern ignores matching directory under any scan root', () => {
+        createTestFiles(testWorkspacePath, {
+            'src/Server/Ignorable/IgnorableModule.luau': 'return {}',
+            'src/Client/Ignorable/AlsoIgnored.luau': 'return {}',
+            'src/Server/Visible/VisibleModule.luau': 'return {}'
+        });
+
+        const restore = mockWorkspaceConfig(testWorkspaceUri, {
+            directoriesToScan: ['src/Server', 'src/Client'],
+            ignoreDirectories: ['Ignorable']
+        });
+
+        try {
+            generateFileAliases();
+
+            const luaurcContent = JSON.parse(fs.readFileSync(path.join(testWorkspacePath, '.luaurc'), 'utf8'));
+            assert.ok(!luaurcContent.aliases.IgnorableModule, 'Should ignore file under Ignorable in Server');
+            assert.ok(!luaurcContent.aliases.AlsoIgnored, 'Should ignore file under Ignorable in Client');
+            assert.ok(luaurcContent.aliases.VisibleModule, 'Should include file not under ignored dir');
+        } finally {
+            restore();
+            cleanupTestFiles(testWorkspacePath, [
+                'src/Server/Ignorable',
+                'src/Client/Ignorable',
+                'src/Server/Visible'
+            ]);
+        }
+    });
+
+    test('ignoreDirectories: workspace-relative path pattern ignores only the specific path', () => {
+        createTestFiles(testWorkspacePath, {
+            'src/Server/Private/SecretA.luau': 'return {}',
+            'src/Client/Private/SecretB.luau': 'return {}',
+        });
+
+        const restore = mockWorkspaceConfig(testWorkspaceUri, {
+            directoriesToScan: ['src/Server', 'src/Client'],
+            ignoreDirectories: ['src/Server/Private']
+        });
+
+        try {
+            generateFileAliases();
+
+            const luaurcContent = JSON.parse(fs.readFileSync(path.join(testWorkspacePath, '.luaurc'), 'utf8'));
+            assert.ok(!luaurcContent.aliases.SecretA, 'Should ignore file under src/Server/Private');
+            assert.ok(luaurcContent.aliases.SecretB, 'Should NOT ignore src/Client/Private — pattern is specific to Server');
+        } finally {
+            restore();
+            cleanupTestFiles(testWorkspacePath, ['src/Server/Private', 'src/Client/Private']);
+        }
+    });
+
+    test('ignoreDirectories: workspace-relative path pattern works for deeply nested directory', () => {
+        createTestFiles(testWorkspacePath, {
+            'src/Shared/Deep/Nested/Target/HiddenModule.luau': 'return {}',
+            'src/Shared/Deep/Nested/OtherModule.luau': 'return {}'
+        });
+
+        const restore = mockWorkspaceConfig(testWorkspaceUri, {
+            directoriesToScan: ['src/Shared'],
+            ignoreDirectories: ['src/Shared/Deep/Nested/Target']
+        });
+
+        try {
+            generateFileAliases();
+
+            const luaurcContent = JSON.parse(fs.readFileSync(path.join(testWorkspacePath, '.luaurc'), 'utf8'));
+            assert.ok(!luaurcContent.aliases.HiddenModule, 'Should ignore file inside deeply nested targeted path');
+            assert.ok(luaurcContent.aliases.OtherModule, 'Should include sibling outside targeted path');
+        } finally {
+            restore();
+            cleanupTestFiles(testWorkspacePath, ['src/Shared/Deep']);
+        }
+    });
+
+    test('ignoreDirectories: regex with / matches workspace-relative path', () => {
+        createTestFiles(testWorkspacePath, {
+            'src/Server/Feature/Internal/PrivateImpl.luau': 'return {}',
+            'src/Server/Feature/PublicApi.luau': 'return {}'
+        });
+
+        const restore = mockWorkspaceConfig(testWorkspaceUri, {
+            directoriesToScan: ['src/Server'],
+            ignoreDirectories: ['Feature/Internal']
+        });
+
+        try {
+            generateFileAliases();
+
+            const luaurcContent = JSON.parse(fs.readFileSync(path.join(testWorkspacePath, '.luaurc'), 'utf8'));
+            assert.ok(!luaurcContent.aliases.PrivateImpl, 'Should ignore file under Feature/Internal (unanchored path regex)');
+            assert.ok(luaurcContent.aliases.PublicApi, 'Should include sibling file not under Internal');
+        } finally {
+            restore();
+            cleanupTestFiles(testWorkspacePath, ['src/Server/Feature']);
+        }
+    });
+
+    test('ignoreDirectories: anchored name pattern ^_* does not affect non-prefixed dirs', () => {
+        createTestFiles(testWorkspacePath, {
+            'src/Server/_InternalDir/HiddenFile.luau': 'return {}',
+            'src/Server/PublicDir/VisibleFile.luau': 'return {}'
+        });
+
+        const restore = mockWorkspaceConfig(testWorkspaceUri, {
+            directoriesToScan: ['src/Server'],
+            ignoreDirectories: ['^_.*']
+        });
+
+        try {
+            generateFileAliases();
+
+            const luaurcContent = JSON.parse(fs.readFileSync(path.join(testWorkspacePath, '.luaurc'), 'utf8'));
+            assert.ok(!luaurcContent.aliases.HiddenFile, 'Should ignore file under _-prefixed directory');
+            assert.ok(luaurcContent.aliases.VisibleFile, 'Should include file under non-prefixed directory');
+        } finally {
+            restore();
+            cleanupTestFiles(testWorkspacePath, ['src/Server/_InternalDir', 'src/Server/PublicDir']);
+        }
+    });
 });

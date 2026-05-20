@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { exec } = require('child_process');
 const vscode = require('vscode');
 const { print, warn, error } = require('../core/logger');
 const { requireWorkspaceRoot, getCommonConfig } = require('../utils/workspaceUtils');
@@ -90,20 +91,25 @@ ${aliasLines.join('\n')}
 }`;
 }
 
+// Helper to test a single ignore pattern against a directory.
+// Patterns containing '/' are matched against the workspace-root-relative path; others against the bare directory name.
+function matchesIgnorePattern(pattern, dirName, relPath) {
+    const subject = pattern.includes('/') ? relPath : dirName;
+    try {
+        return new RegExp(pattern).test(subject);
+    } catch (e) {
+        warn(`Invalid regex pattern: ${pattern}, falling back to exact match`);
+        return subject.toLowerCase() === pattern.toLowerCase();
+    }
+}
+
 // Helper to check if the file is located under a directory that matches any ignore pattern
-function isUnderIgnoredDir(filePath, rootDir, ignorePatterns) {
+function isUnderIgnoredDir(filePath, rootDir, workspaceRoot, ignorePatterns) {
     let currentDir = path.dirname(filePath);
     while (currentDir !== rootDir) {
         const dirName = path.basename(currentDir);
-        if (ignorePatterns.some(pattern => {
-            try {
-                return new RegExp(pattern).test(dirName);
-            } catch (e) {
-                // If regex is invalid, fall back to exact string matching
-                warn(`Invalid regex pattern: ${pattern}, falling back to exact match`);
-                return dirName.toLowerCase() === pattern.toLowerCase();
-            }
-        })) {
+        const relPath = path.relative(workspaceRoot, currentDir).replace(/\\/g, '/');
+        if (ignorePatterns.some(pattern => matchesIgnorePattern(pattern, dirName, relPath))) {
             return true;
         }
         currentDir = path.dirname(currentDir);
@@ -124,15 +130,8 @@ function scanDir(dir, rootDir, supportedExtensions, ignorePatterns, ignoreList, 
     let checkDir = dir;
     while (checkDir !== rootDir && checkDir !== path.dirname(checkDir)) {
         const dirName = path.basename(checkDir);
-        if (ignorePatterns.some(pattern => {
-            try {
-                return new RegExp(pattern).test(dirName);
-            } catch (e) {
-                // If regex is invalid, fall back to exact string matching
-                warn(`Invalid regex pattern: ${pattern}, falling back to exact match`);
-                return dirName.toLowerCase() === pattern.toLowerCase();
-            }
-        })) {
+        const relPath = path.relative(workspaceRoot, checkDir).replace(/\\/g, '/');
+        if (ignorePatterns.some(pattern => matchesIgnorePattern(pattern, dirName, relPath))) {
             skip = true;
             break;
         }
@@ -149,7 +148,7 @@ function scanDir(dir, rootDir, supportedExtensions, ignorePatterns, ignoreList, 
         if (fs.existsSync(initFilePath)) {
             foundInit = initFilePath;
             const folderName = path.basename(dir);
-            if (!isUnderIgnoredDir(initFilePath, rootDir, ignorePatterns)) {
+            if (!isUnderIgnoredDir(initFilePath, rootDir, workspaceRoot, ignorePatterns)) {
                 if (!basenameMap[folderName]) basenameMap[folderName] = [];
                 basenameMap[folderName].push({
                     path: initFilePath.replace(workspaceRoot + '\\', '').replace(/\\/g, '/')
@@ -170,7 +169,7 @@ function scanDir(dir, rootDir, supportedExtensions, ignorePatterns, ignoreList, 
             if (foundInit && file.name.startsWith('init.')) {
                 return;
             }
-            if (!isUnderIgnoredDir(filePath, rootDir, ignorePatterns)) {
+            if (!isUnderIgnoredDir(filePath, rootDir, workspaceRoot, ignorePatterns)) {
                 const aliasKey = path.parse(file.name).name;
                 if (!basenameMap[aliasKey]) basenameMap[aliasKey] = [];
                 basenameMap[aliasKey].push({
@@ -196,7 +195,13 @@ function generateFileAliases() {
 
     const directoriesToScan = config.get('directoriesToScan') || [];
     const ignoreDirectories = config.get('ignoreDirectories') || [];
-    const manualAliases = config.get('manualAliases') || {};
+    const inspectedManualAliases = config.inspect('manualAliases');
+    const manualAliases = (inspectedManualAliases
+        ? (inspectedManualAliases.workspaceFolderValue
+            ?? inspectedManualAliases.workspaceValue
+            ?? inspectedManualAliases.globalValue
+            ?? inspectedManualAliases.defaultValue)
+        : null) ?? {};
     const ignoreList = ['.server', '.client'];
     const rootDirs = directoriesToScan
         .map(dir => getDirPath(workspaceRoot, dir))
@@ -267,7 +272,14 @@ function generateFileAliases() {
     const luaurcString = JSON.stringify(finalLuaurc, null, 4);
     fs.writeFileSync(luaurcPath, luaurcString);
 
-    // console.log('Updated .luaurc aliases:', JSON.stringify(luaurc.aliases, null, 2));
+    // Run post-regeneration scripts
+    const onAliasesRegenerated = config.get('onAliasesRegenerated') || [];
+    for (const command of onAliasesRegenerated) {
+        exec(command, { cwd: workspaceRoot }, (err) => {
+            if (err) error(`onAliasesRegenerated command failed: "${command}"`, err.message);
+            else print(`onAliasesRegenerated: ran "${command}"`);
+        });
+    }
 }
 
 module.exports = { generateFileAliases };

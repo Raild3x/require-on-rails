@@ -30,7 +30,12 @@ function createMockConfig(overrides = {}) {
             return config.hasOwnProperty(key) ? config[key] : defaultValue;
         },
         has: (key) => config.hasOwnProperty(key),
-        inspect: () => undefined,
+        inspect: (key) => {
+            if (config.hasOwnProperty(key)) {
+                return { workspaceFolderValue: undefined, workspaceValue: config[key], globalValue: undefined, defaultValue: undefined };
+            }
+            return { workspaceFolderValue: undefined, workspaceValue: undefined, globalValue: undefined, defaultValue: undefined };
+        },
         update: () => Promise.resolve()
     };
 }
