@@ -4,6 +4,19 @@ All notable changes to the "require-on-rails" extension will be documented in th
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [0.3.0] - 2026-05-20
+
+### Extension
+
+#### Added
+- **Post-Regeneration Commands** (`onAliasesRegenerated`): New application-scoped setting accepts an array of shell commands to execute from the workspace root after every alias regeneration cycle. Commands run serially within a batch, and if another regeneration fires while commands are still in-flight, the new request is queued (latest-wins) to prevent overlapping duplicate runs.
+
+#### Fixed
+- **`regenerateAliases` command not functional**: The `require-on-rails.regenerateAliases` command was declared in `package.json` but never registered at runtime. It now correctly calls `generateFileAliases()` when invoked.
+- **`onAliasesRegenerated` type guard**: The setting value is now validated with `Array.isArray` before use, and each element is filtered to non-empty strings. A misconfigured non-array value (e.g. an accidental string) is safely ignored rather than being iterated character-by-character as individual shell commands.
+
+---
+
 ## [0.2.0] - 2026-04-16
 
 ### Luau Module (v0.2.0)

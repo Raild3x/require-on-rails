@@ -91,14 +91,16 @@ ${aliasLines.join('\n')}
 }
 
 // Helper to test a single ignore pattern against a directory.
-// Patterns containing '/' are matched against the workspace-root-relative path; others against the bare directory name.
+// Patterns containing path separators ('/' or '\\') are matched against the workspace-root-relative path.
 function matchesIgnorePattern(pattern, dirName, relPath) {
-    const subject = pattern.includes('/') ? relPath : dirName;
+    const isPathPattern = pattern.includes('/') || pattern.includes('\\');
+    const normalizedPattern = isPathPattern ? pattern.replace(/\\/g, '/') : pattern;
+    const subject = isPathPattern ? relPath : dirName;
     try {
-        return new RegExp(pattern).test(subject);
+        return new RegExp(normalizedPattern).test(subject);
     } catch (e) {
         warn(`Invalid regex pattern: ${pattern}, falling back to exact match`);
-        return subject.toLowerCase() === pattern.toLowerCase();
+        return subject.toLowerCase() === normalizedPattern.toLowerCase();
     }
 }
 

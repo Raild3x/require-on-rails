@@ -15,7 +15,7 @@ function createMockConfig(overrides = {}) {
         importModulePaths: ['ReplicatedStorage.src._Import'],
         tryToAddImportRequire: true,
         importOpacity: 0.45,
-        preferImportPlacement: 'BeforeFirstRequire',
+        preferredImportPlacement: 'BeforeFirstRequire',
         manualAliases: {
             '@Server': 'src/Server',
             '@Client': 'src/Client', 

@@ -324,6 +324,20 @@ This extension contributes the following settings through `require-on-rails.*`:
   - **Default**: `{"Server": "src/Server", "Client": "src/Client", "Shared": "src/Shared"}`
   - **Description**: Manual aliases for absolute path support. Maps alias names to their corresponding directory paths (relative to workspace root). Used for absolute require path updates when files are moved between different alias directories.
 
+### Post-Processing
+
+* `require-on-rails.onAliasesRegenerated`:
+  - **Type**: `array<string>`
+  - **Default**: `[]`
+  - **Scope**: Application (user settings only — cannot be overridden at workspace or folder level)
+  - **Description**: Shell commands to run after aliases are regenerated. Each command is executed from the workspace root. Commands run serially within a batch; rapid file changes that trigger multiple regenerations will queue at most one pending run, preventing duplicate concurrent executions. Skipped entirely in untrusted workspaces.
+  - **Example**:
+    ```jsonc
+    "require-on-rails.onAliasesRegenerated": [
+        "npm run sync-aliases"
+    ]
+    ```
+
 ## Commands
 
 RequireOnRails provides the following commands accessible via Command Palette (`Ctrl+Shift+P`):

@@ -323,6 +323,29 @@ suite('File Alias Generation Tests', () => {
         }
     });
 
+    test('ignoreDirectories: Windows-style path pattern with backslashes ignores only the specific path', () => {
+        createTestFiles(testWorkspacePath, {
+            'src/Server/Private/SecretA.luau': 'return {}',
+            'src/Client/Private/SecretB.luau': 'return {}'
+        });
+
+        const restore = mockWorkspaceConfig(testWorkspaceUri, {
+            directoriesToScan: ['src/Server', 'src/Client'],
+            ignoreDirectories: ['src\\Server\\Private']
+        });
+
+        try {
+            generateFileAliases();
+
+            const luaurcContent = JSON.parse(fs.readFileSync(path.join(testWorkspacePath, '.luaurc'), 'utf8'));
+            assert.ok(!luaurcContent.aliases.SecretA, 'Should ignore file under src/Server/Private when pattern uses backslashes');
+            assert.ok(luaurcContent.aliases.SecretB, 'Should NOT ignore src/Client/Private — pattern is specific to Server');
+        } finally {
+            restore();
+            cleanupTestFiles(testWorkspacePath, ['src/Server/Private', 'src/Client/Private']);
+        }
+    });
+
     test('ignoreDirectories: regex with / matches workspace-relative path', () => {
         createTestFiles(testWorkspacePath, {
             'src/Server/Feature/Internal/PrivateImpl.luau': 'return {}',

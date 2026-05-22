@@ -153,7 +153,6 @@
         "require-on-rails.onAliasesRegenerated": {
           "type": "array",
           "default": [],
-          "scope": "application",
           "description": "Shell commands to run after aliases are regenerated. Each command is executed from the workspace root. Scope is restricted to user settings only — workspace/folder settings cannot override this value.",
           "items": {
             "type": "string"
