@@ -123,6 +123,33 @@ function shouldIgnoreFile(fileName, ignoreList) {
     return ignoreList.some(substring => fileName.includes(substring));
 }
 
+// Resolve ambiguous basename candidates using ordered path-priority prefixes.
+// Returns a resolved path only when exactly one candidate matches the highest-priority matched prefix.
+function resolveAmbiguousAliasByPathPriority(candidates, pathPriority) {
+    if (!Array.isArray(pathPriority) || pathPriority.length === 0) {
+        return null;
+    }
+
+    const normalizedPriority = pathPriority
+        .filter(entry => typeof entry === 'string' && entry.length > 0)
+        .map(entry => entry.replace(/\\/g, '/'));
+
+    for (const priorityPrefix of normalizedPriority) {
+        const matched = candidates.filter(candidate => candidate.path.startsWith(priorityPrefix));
+
+        if (matched.length === 1) {
+            return { resolvedPath: matched[0].path, priorityPrefix };
+        }
+
+        // Highest-priority tie remains ambiguous by design.
+        if (matched.length > 1) {
+            return { ambiguous: true, priorityPrefix };
+        }
+    }
+
+    return null;
+}
+
 
 // Recursive function to scan a directory and collect files by basename
 function scanDir(dir, rootDir, supportedExtensions, ignorePatterns, ignoreList, basenameMap, workspaceRoot) {
@@ -233,6 +260,8 @@ function generateFileAliases() {
 
     const directoriesToScan = config.get('directoriesToScan') || [];
     const ignoreDirectories = config.get('ignoreDirectories') || [];
+    const rawPathPriority = config.get('pathPriority', []);
+    const pathPriority = Array.isArray(rawPathPriority) ? rawPathPriority : [];
     const inspectedManualAliases = config.inspect('manualAliases');
     const manualAliases = (inspectedManualAliases
         ? (inspectedManualAliases.workspaceFolderValue
@@ -285,6 +314,14 @@ function generateFileAliases() {
             uniqueAliases[basename] = arr[0].path;
             // console.log(`Unique alias: "${basename}" -> "${arr[0].path}"`);
         } else {
+            const priorityResolution = resolveAmbiguousAliasByPathPriority(arr, pathPriority);
+            if (priorityResolution && priorityResolution.resolvedPath) {
+                uniqueAliases[basename] = priorityResolution.resolvedPath;
+                print(
+                    `Resolved ambiguous alias: "${basename}" using pathPriority prefix "${priorityResolution.priorityPrefix}" -> "${priorityResolution.resolvedPath}"`
+                );
+                continue;
+            }
             ambiguousAliases.add(basename);
             print(`Ambiguous alias: "${basename}" found in:`, arr.map(x => x.path));
         }

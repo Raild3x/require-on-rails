@@ -90,6 +90,117 @@ suite('File Alias Generation Tests', () => {
         }
     });
 
+    test('pathPriority: should resolve ambiguous alias when highest-priority path has a single match', async () => {
+        const duplicateFile = path.join(testWorkspacePath, 'src/Client/Config.luau');
+        fs.writeFileSync(duplicateFile, 'local ClientConfig = {}\nreturn ClientConfig');
+
+        const restore = mockWorkspaceConfig(testWorkspaceUri, {
+            directoriesToScan: ['src/Server', 'src/Client', 'src/Shared'],
+            manualAliases: {},
+            pathPriority: ['src/Client']
+        });
+
+        try {
+            generateFileAliases();
+
+            const luaurcPath = path.join(testWorkspacePath, '.luaurc');
+            const luaurcContent = JSON.parse(fs.readFileSync(luaurcPath, 'utf8'));
+
+            assert.ok(luaurcContent.aliases.Config, 'Config should be resolved by pathPriority');
+            assert.strictEqual(luaurcContent.aliases.Config, 'src/Client/Config.luau', 'Config should resolve to the only src/Client match');
+        } finally {
+            restore();
+            fs.unlinkSync(duplicateFile);
+        }
+    });
+
+    test('pathPriority: should remain ambiguous when highest-priority path has multiple matches', async () => {
+        const duplicateFileA = path.join(testWorkspacePath, 'src/Client/Config.luau');
+        const duplicateDirB = path.join(testWorkspacePath, 'src/Client/Sub');
+        const duplicateFileB = path.join(duplicateDirB, 'Config.luau');
+        fs.mkdirSync(duplicateDirB, { recursive: true });
+        fs.writeFileSync(duplicateFileA, 'local ClientConfigA = {}\nreturn ClientConfigA');
+        fs.writeFileSync(duplicateFileB, 'local ClientConfigB = {}\nreturn ClientConfigB');
+
+        const restore = mockWorkspaceConfig(testWorkspaceUri, {
+            directoriesToScan: ['src/Server', 'src/Client', 'src/Shared'],
+            manualAliases: {},
+            pathPriority: ['src/Client', 'src/Shared']
+        });
+
+        try {
+            generateFileAliases();
+
+            const luaurcPath = path.join(testWorkspacePath, '.luaurc');
+            const luaurcContent = JSON.parse(fs.readFileSync(luaurcPath, 'utf8'));
+
+            assert.ok(!luaurcContent.aliases.Config, 'Config should remain ambiguous when highest-priority path ties');
+        } finally {
+            restore();
+            fs.rmSync(path.join(testWorkspacePath, 'src/Client/Sub'), { recursive: true, force: true });
+            if (fs.existsSync(duplicateFileA)) {
+                fs.unlinkSync(duplicateFileA);
+            }
+        }
+    });
+
+    test('pathPriority: should remain ambiguous when no candidates match any priority path', async () => {
+        const duplicateFile = path.join(testWorkspacePath, 'src/Client/Config.luau');
+        fs.writeFileSync(duplicateFile, 'local ClientConfig = {}\nreturn ClientConfig');
+
+        const restore = mockWorkspaceConfig(testWorkspaceUri, {
+            directoriesToScan: ['src/Server', 'src/Client', 'src/Shared'],
+            manualAliases: {},
+            pathPriority: ['Packages']
+        });
+
+        try {
+            generateFileAliases();
+
+            const luaurcPath = path.join(testWorkspacePath, '.luaurc');
+            const luaurcContent = JSON.parse(fs.readFileSync(luaurcPath, 'utf8'));
+
+            assert.ok(!luaurcContent.aliases.Config, 'Config should remain ambiguous when no pathPriority entries match');
+        } finally {
+            restore();
+            fs.unlinkSync(duplicateFile);
+        }
+    });
+
+    test('pathPriority: should remain ambiguous when higher priority ties even if lower priority has a unique match', async () => {
+        const serverDirA = path.join(testWorkspacePath, 'src/Server/Combat');
+        const serverDirB = path.join(testWorkspacePath, 'src/Server/System');
+        const clientDir = path.join(testWorkspacePath, 'src/Client');
+        const serverFileA = path.join(serverDirA, 'Weapon.luau');
+        const serverFileB = path.join(serverDirB, 'Weapon.luau');
+        const clientFile = path.join(clientDir, 'Weapon.luau');
+
+        fs.mkdirSync(serverDirA, { recursive: true });
+        fs.mkdirSync(serverDirB, { recursive: true });
+        fs.mkdirSync(clientDir, { recursive: true });
+        fs.writeFileSync(serverFileA, 'local WeaponA = {}\nreturn WeaponA');
+        fs.writeFileSync(serverFileB, 'local WeaponB = {}\nreturn WeaponB');
+        fs.writeFileSync(clientFile, 'local WeaponClient = {}\nreturn WeaponClient');
+
+        const restore = mockWorkspaceConfig(testWorkspaceUri, {
+            directoriesToScan: ['src/Server', 'src/Client'],
+            manualAliases: {},
+            pathPriority: ['src/Server', 'src/Client']
+        });
+
+        try {
+            generateFileAliases();
+
+            const luaurcPath = path.join(testWorkspacePath, '.luaurc');
+            const luaurcContent = JSON.parse(fs.readFileSync(luaurcPath, 'utf8'));
+
+            assert.ok(!luaurcContent.aliases.Weapon, 'Weapon should remain ambiguous because highest-priority path has multiple matches');
+        } finally {
+            restore();
+            cleanupTestFiles(testWorkspacePath, ['src/Server/Combat', 'src/Server/System', 'src/Client/Weapon.luau']);
+        }
+    });
+
     test('Should handle files with same basename in different subdirectories', async () => {
         const testDirs = ['src/Server/Combat', 'src/Client/Combat'];
         for (const dir of testDirs) {

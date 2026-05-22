@@ -145,6 +145,14 @@
             "type": "string"
           }
         },
+        "require-on-rails.pathPriority": {
+          "type": "array",
+          "default": [],
+          "description": "Ordered path prefixes used to resolve ambiguous auto-generated aliases. Earlier entries are higher priority. An ambiguous basename is resolved only when exactly one candidate matches the highest-priority matched prefix; if multiple candidates match that same highest-priority prefix, it remains ambiguous.",
+          "items": {
+            "type": "string"
+          }
+        },
         "require-on-rails.skipUpdateNotificationForVersion": {
           "type": "string",
           "default": "",

@@ -7,6 +7,7 @@ function createMockConfig(overrides = {}) {
     const defaults = {
         directoriesToScan: ['src/Server', 'src/Client', 'src/Shared', 'Packages'],
         ignoreDirectories: ['^_.*'],
+        pathPriority: [],
         supportedExtensions: ['.lua', '.luau'],
         enableAbsolutePathUpdates: true,
         enableFileNameCollisionResolution: false,

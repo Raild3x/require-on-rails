@@ -118,6 +118,16 @@ Adjust these key settings to match your project structure in your VS Code settin
         "Shared": "src/Shared"
     },
 
+    // Ordered path prefixes used to resolve ambiguous basename aliases.
+    // Earlier entries are higher priority.
+    // Resolution only occurs if exactly one candidate matches the
+    // highest-priority matched prefix.
+    "require-on-rails.pathPriority": [
+      "src/Server",
+      "src/Client",
+      "src/Shared"
+    ],
+
     // This is the path to the importer you generate via the RequireOnRails 
     // luau module. This path should be in Roblox hierarchy terms.
     "require-on-rails.importModulePaths": [
@@ -134,7 +144,7 @@ Adjust these key settings to match your project structure in your VS Code settin
 
 ### 2. Project Structure
 Ensure your project follows a structure where:
-- Files have unique basenames across all scanned directories
+- Files ideally have unique basenames across scanned directories, or use `pathPriority` to resolve selected collisions
 - Directory structure matches your `.vscode/settings.json` configuration
 - Import system is properly configured
 
@@ -226,7 +236,7 @@ All options are passed to `RequireOnRails.create { … }`:
 
 ## Important Notes
 
-⚠️ **Unique Basenames Required**: All files in scanned directories must have unique basenames. If you have `PlayerService.luau` in both Server and Client directories, no alias will be generated to avoid ambiguity.
+⚠️ **Ambiguous Basenames**: Duplicate basenames across scanned directories are ambiguous by default and no alias is generated. You can set `pathPriority` to resolve some collisions, but only if exactly one candidate matches the highest-priority matched path.
 
 ⚠️ **Configuration Required**: You must configure `directoriesToScan` and `importModulePaths` to match your specific project structure.
 
@@ -323,6 +333,11 @@ This extension contributes the following settings through `require-on-rails.*`:
   - **Type**: `object`
   - **Default**: `{"Server": "src/Server", "Client": "src/Client", "Shared": "src/Shared"}`
   - **Description**: Manual aliases for absolute path support. Maps alias names to their corresponding directory paths (relative to workspace root). Used for absolute require path updates when files are moved between different alias directories.
+
+* `require-on-rails.pathPriority`:
+  - **Type**: `array<string>`
+  - **Default**: `[]`
+  - **Description**: Ordered path prefixes used to resolve ambiguous auto-generated aliases. Earlier entries are higher priority. If exactly one candidate for a basename matches the highest-priority matched prefix, that alias is generated. If multiple candidates match that same highest-priority prefix, the alias remains ambiguous and is not generated.
 
 ### Post-Processing
 
