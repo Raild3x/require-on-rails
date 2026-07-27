@@ -344,7 +344,7 @@ This extension contributes the following settings through `require-on-rails.*`:
 * `require-on-rails.onAliasesRegenerated`:
   - **Type**: `array<string>`
   - **Default**: `[]`
-  - **Scope**: Application (user settings only — cannot be overridden at workspace or folder level)
+  - **Scope**: Set it in your User settings to run commands in *every* workspace. A workspace may also request commands, but those only run in that workspace and only after you approve them (see below).
   - **Description**: Shell commands to run after aliases are regenerated. Each command is executed from the workspace root. Commands run serially within a batch; rapid file changes that trigger multiple regenerations will queue at most one pending run, preventing duplicate concurrent executions. Skipped entirely in untrusted workspaces.
   - **Example**:
     ```jsonc
@@ -352,6 +352,26 @@ This extension contributes the following settings through `require-on-rails.*`:
         "npm run sync-aliases"
     ]
     ```
+
+**If a project you open sets this**, RequireOnRails will *not* run its commands — otherwise
+cloning a repository would be enough to execute arbitrary shell commands on your machine.
+Instead you get a notification saying how many commands the workspace wants to run. Choosing
+**Review Commands** shows you exactly what they are, and from there you can approve them.
+Nothing runs until you do.
+
+Approval applies **to that workspace only**. It is recorded in VS Code's own per-workspace
+storage, not in your settings and not in the repository, so:
+
+* approving a project's `npm run sync-aliases` does not cause it to run in your other projects
+* the repository cannot approve itself by committing a settings file
+* the approval covers the exact commands you saw. If the repository later changes one, the
+  approval no longer matches it and you are asked again
+
+Put commands in your **User** settings instead if you genuinely want them in every workspace.
+
+The commands are also written to the RequireOnRails output channel, so you can read them
+without acting on the notification. If you dismiss it, it reappears the next time the
+workspace asks for a set of commands you haven't approved.
 
 ## Commands
 

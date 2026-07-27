@@ -231,6 +231,105 @@ function _scheduleAliasCommands(commands, workspaceRoot) {
     _runCommandsSerial(commands, workspaceRoot);
 }
 
+function toCommandList(value) {
+    return Array.isArray(value) ? value.filter(c => typeof c === 'string' && c.length > 0) : [];
+}
+
+// onAliasesRegenerated only ever runs from the user's own settings, so that opening a
+// repository cannot make RequireOnRails execute arbitrary shell commands. This is enforced
+// here rather than with `"scope": "machine"` in package.json, because VS Code strips
+// machine-scoped values out of the workspace configuration before `inspect()` can see them,
+// and we need to see them in order to tell the user what the workspace was asking for.
+function getAliasCommands(config) {
+    const inspected = config.inspect('onAliasesRegenerated') || {};
+    return {
+        userCommands: toCommandList(inspected.globalValue),
+        workspaceCommands: toCommandList(inspected.workspaceFolderValue ?? inspected.workspaceValue)
+    };
+}
+
+// Commands the user has approved *for this workspace only*.
+//
+// This deliberately does not live in settings. User settings would apply the commands to
+// every workspace the user opens, and workspace settings are the very thing being guarded
+// against. `workspaceState` is keyed to this workspace and lives in VS Code's own storage,
+// so the repository cannot approve itself by editing a file.
+//
+// Exact command strings are stored rather than a "this workspace is trusted" flag, so that
+// editing a command in the repository invalidates the approval and re-prompts.
+const APPROVED_COMMANDS_KEY = 'approvedAliasCommands';
+
+let _extensionContext = null;
+
+function setExtensionContext(context) {
+    _extensionContext = context;
+}
+
+// No usable workspace state means no stored approvals, so nothing extra is allowed to run.
+function getWorkspaceState() {
+    return _extensionContext && _extensionContext.workspaceState
+        ? _extensionContext.workspaceState
+        : null;
+}
+
+function getApprovedCommands() {
+    const state = getWorkspaceState();
+    return state ? toCommandList(state.get(APPROVED_COMMANDS_KEY)) : [];
+}
+
+function approveCommandsForWorkspace(commands) {
+    const state = getWorkspaceState();
+    if (!state) return Promise.reject(new Error('No workspace state available to store the approval'));
+
+    const merged = [...new Set([...getApprovedCommands(), ...commands])];
+    return Promise.resolve(state.update(APPROVED_COMMANDS_KEY, merged));
+}
+
+// Announced once per distinct set per session, since alias regeneration runs on every file change.
+const _announcedWorkspaceCommands = new Set();
+
+function announceWorkspaceCommands(pending) {
+    const signature = JSON.stringify(pending);
+    if (_announcedWorkspaceCommands.has(signature)) return;
+    _announcedWorkspaceCommands.add(signature);
+
+    warn(`This workspace asks to run ${pending.length} command(s) after each alias regeneration, but workspace settings cannot run commands on their own:`);
+    pending.forEach(c => warn(`    ${c}`));
+    warn('Approve them for this workspace from the notification, or put them in require-on-rails.onAliasesRegenerated in your User settings to run them in every workspace.');
+
+    const review = 'Review Commands';
+    vscode.window.showWarningMessage(
+        `RequireOnRails: this workspace wants to run ${pending.length} command(s) after aliases regenerate. They are being ignored until you approve them.`,
+        review,
+        'Dismiss'
+    ).then(choice => {
+        if (choice !== review) return;
+        if (!getWorkspaceState()) {
+            vscode.window.showErrorMessage('RequireOnRails: cannot store an approval right now. See the RequireOnRails output for the commands.');
+            return;
+        }
+
+        const enable = 'Approve for This Workspace';
+        return vscode.window.showWarningMessage(
+            `Run ${pending.length === 1 ? 'this command' : `these ${pending.length} commands`} whenever RequireOnRails regenerates aliases in this workspace?`,
+            {
+                modal: true,
+                detail: `${pending.join('\n')}\n\nThis workspace supplied them. RequireOnRails has not checked what they do, and they will run with your permissions from the workspace root. The approval applies to this workspace only, and is withdrawn automatically if the commands change.`
+            },
+            enable
+        ).then(confirm => {
+            if (confirm !== enable) return;
+            return approveCommandsForWorkspace(pending).then(
+                () => vscode.window.showInformationMessage('RequireOnRails: approved for this workspace. They will run on the next alias regeneration.'),
+                e => {
+                    error('Failed to store onAliasesRegenerated approval:', e);
+                    vscode.window.showErrorMessage('RequireOnRails: could not store the approval. See the RequireOnRails output for details.');
+                }
+            );
+        });
+    });
+}
+
 // Main function to generate file aliases
 function generateFileAliases() {
     const config = vscode.workspace.getConfiguration(extenionName);
@@ -379,18 +478,28 @@ function generateFileAliases() {
     const luaurcString = JSON.stringify(finalLuaurc, null, 4);
     fs.writeFileSync(luaurcPath, luaurcString);
 
-    // Run post-regeneration scripts (user settings only; skipped in untrusted workspaces)
-    const rawAliasCommands = config.get('onAliasesRegenerated');
-    const onAliasesRegenerated = Array.isArray(rawAliasCommands)
-        ? rawAliasCommands.filter(c => typeof c === 'string' && c.length > 0)
-        : [];
-    if (onAliasesRegenerated.length > 0) {
-        if (!vscode.workspace.isTrusted) {
+    // Run post-regeneration scripts. Commands come from the user's own settings (which they
+    // chose for every workspace) plus anything they explicitly approved for this workspace.
+    // Skipped entirely in untrusted workspaces.
+    const { userCommands, workspaceCommands } = getAliasCommands(config);
+    if (!vscode.workspace.isTrusted) {
+        // Nothing runs and nothing is offered until the workspace is trusted, so that the
+        // trust prompt stays the first gate rather than this one.
+        if (userCommands.length > 0 || workspaceCommands.length > 0) {
             warn('onAliasesRegenerated: skipping commands in untrusted workspace');
-        } else {
-            _scheduleAliasCommands(onAliasesRegenerated, workspaceRoot);
+        }
+    } else {
+        const approved = getApprovedCommands();
+        const pending = workspaceCommands.filter(c => !userCommands.includes(c) && !approved.includes(c));
+        if (pending.length > 0) {
+            announceWorkspaceCommands(pending);
+        }
+
+        const toRun = [...userCommands, ...workspaceCommands.filter(c => approved.includes(c))];
+        if (toRun.length > 0) {
+            _scheduleAliasCommands(toRun, workspaceRoot);
         }
     }
 }
 
-module.exports = { generateFileAliases };
+module.exports = { generateFileAliases, setExtensionContext };

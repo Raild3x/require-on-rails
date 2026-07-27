@@ -1,6 +1,6 @@
 const vscode = require('vscode');
 const path = require('path');
-const { generateFileAliases } = require('./features/updateLuaFileAliases');
+const { generateFileAliases, setExtensionContext } = require('./features/updateLuaFileAliases');
 const { updateRequireNames } = require('./features/updateRequireNames');
 const { hideLines, unhideLines } = require('./features/hideLines');
 const { unpackProjectTemplate } = require('./commands/unpackProjectTemplate');
@@ -210,6 +210,9 @@ function activate(context) {
     outputChannel = vscode.window.createOutputChannel('RequireOnRails', { log: true });
     context.subscriptions.push(outputChannel);
     setOutputChannel(outputChannel);
+
+    // Needed for workspaceState, where per-workspace onAliasesRegenerated approvals are kept.
+    setExtensionContext(context);
 
     print('RequireOnRails extension activated');
 

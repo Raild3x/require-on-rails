@@ -2,7 +2,7 @@
   "name": "require-on-rails",
   "displayName": "RequireOnRails",
   "description": "An opinionated Roblox Luau utility extension to simplify working with complex codebase hierarchies",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "publisher": "Raild3x",
   "icon": "images/icon_v2.png",
   "repository": {
@@ -160,9 +160,8 @@
         },
         "require-on-rails.onAliasesRegenerated": {
           "type": "array",
-          "scope": "machine",
           "default": [],
-          "description": "Shell commands to run after aliases are regenerated. Each command is executed from the workspace root. Scope is restricted to user settings only — workspace/folder settings cannot override this value.",
+          "description": "Shell commands to run after aliases are regenerated. Each command is executed from the workspace root. Only commands set in your own User settings are ever run; if a workspace sets this, RequireOnRails ignores the commands and notifies you so you can review them and opt in.",
           "items": {
             "type": "string"
           }
