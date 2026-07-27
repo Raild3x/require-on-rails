@@ -373,6 +373,31 @@ RequireOnRails provides the following commands accessible via Command Palette (`
 - Check that `directoriesToScan` matches your actual directory structure
 - Ensure file basenames are unique across all scanned directories
 - Verify RequireOnRails is activated (check status bar)
+- **Turn on verbose logging** (below) — it names the exact rule that rejected each file
+
+**Q: A specific file isn't getting an alias and I can't tell why**
+
+Turn the log level up and RequireOnRails will explain every decision it makes:
+
+1. Open the **Output** panel (`Ctrl+Shift+U`) and pick **RequireOnRails** from the dropdown
+2. Click the gear icon on that panel and choose **Debug** (or run **Developer: Set Log Level...** from the Command Palette)
+3. Run **RequireOnRails: Regenerate Aliases (Debug)**
+
+The log then shows which directories were scanned versus pruned (and which
+`ignoreDirectories` pattern pruned them), every file added or skipped with the
+reason, why `pathPriority` did or didn't break an ambiguous name, and a summary
+of the whole run. **Trace** additionally dumps the full basename and alias sets.
+
+Common reasons a file is skipped:
+
+| Reason | Fix |
+| --- | --- |
+| Its name contains `.server` or `.client` | Expected — these are context-scoped and never aliased |
+| A parent directory matched `ignoreDirectories` | Adjust the pattern (note: it's an unanchored regex, so `Foo` also matches `MyFooBar`) |
+| Another file shares its basename (ambiguous) | Rename one, or add a `pathPriority` prefix to pick a winner |
+| Its directory has an `init.luau` | Expected — the folder name becomes the alias instead |
+| Its name matches a `manualAliases` key | Manual aliases always win; rename one of them |
+| Its scan root doesn't exist | Fix the `directoriesToScan` entry (this also logs a warning at the default level) |
 
 **Q: Import require prompts not working**
 - Verify `importModulePaths` points to your actual import module location

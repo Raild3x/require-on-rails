@@ -6,7 +6,7 @@ const { hideLines, unhideLines } = require('./features/hideLines');
 const { unpackProjectTemplate } = require('./commands/unpackProjectTemplate');
 const { downloadLuauModule } = require('./commands/downloadLuauModule');
 const { addImportToAllFiles } = require('./features/addImportToFiles');
-const { setOutputChannel, print, warn, error } = require('./core/logger');
+const { setOutputChannel, print, warn, error, debug } = require('./core/logger');
 const { checkForPackageUpdatesWithSkip, checkForPackageUpdates } = require('./features/packageUpdateChecker');
 
 let isActive = false;
@@ -164,6 +164,9 @@ let debouncePending = false;
 let isGeneratingAliases = false;
 const CONTEXTUAL_IMPORT_PLACEHOLDER = '{IMPORT_MODULE_PATH}';
 
+// Settings that change the generated alias set, and so must trigger a regeneration.
+const ALIAS_CONFIG_KEYS = ['directoriesToScan', 'ignoreDirectories', 'pathPriority', 'manualAliases'];
+
 function debouncedGenerateFileAliases() {
     if (isGeneratingAliases) return; // Prevent recursive calls
     
@@ -201,26 +204,35 @@ function activate(context) {
     const config = vscode.workspace.getConfiguration('require-on-rails');
     const contextualImportTemplate = config.get('contextualImportTemplate', '');
     
-    // Create output channel for logging
-    outputChannel = vscode.window.createOutputChannel('RequireOnRails');
+    // Create output channel for logging. `{ log: true }` makes this a LogOutputChannel, so
+    // verbosity is controlled by the user via the Output panel's gear icon (or the
+    // "Developer: Set Log Level..." command) rather than an extension setting.
+    outputChannel = vscode.window.createOutputChannel('RequireOnRails', { log: true });
     context.subscriptions.push(outputChannel);
     setOutputChannel(outputChannel);
-    
+
     print('RequireOnRails extension activated');
-    print(config);
 
     validateContextualImportTemplate(contextualImportTemplate, true);
 
     const configChangeListener = vscode.workspace.onDidChangeConfiguration((event) => {
-        if (!event.affectsConfiguration('require-on-rails.contextualImportTemplate')) {
-            return;
+        if (event.affectsConfiguration('require-on-rails.contextualImportTemplate')) {
+            const updatedTemplate = vscode.workspace
+                .getConfiguration('require-on-rails')
+                .get('contextualImportTemplate', '');
+
+            validateContextualImportTemplate(updatedTemplate, true);
         }
 
-        const updatedTemplate = vscode.workspace
-            .getConfiguration('require-on-rails')
-            .get('contextualImportTemplate', '');
-
-        validateContextualImportTemplate(updatedTemplate, true);
+        // The settings.json watcher only catches workspace-file edits, so global-scope changes
+        // to these would otherwise never take effect until the next file change.
+        const changedAliasSetting = ALIAS_CONFIG_KEYS.find(key =>
+            event.affectsConfiguration(`require-on-rails.${key}`)
+        );
+        if (changedAliasSetting && isActive) {
+            debug(`Setting "require-on-rails.${changedAliasSetting}" changed; regenerating aliases.`);
+            debouncedGenerateFileAliases();
+        }
     });
     context.subscriptions.push(configChangeListener);
     
@@ -266,6 +278,9 @@ function activate(context) {
     });
 
     registerCommand(context, 'require-on-rails.regenerateAliases', () => {
+        // This command exists for debugging, so surface the log. Set the channel's level to
+        // Debug (gear icon in the Output panel) to see every scan/skip decision.
+        outputChannel.show(true);
         generateFileAliases();
     });
 
