@@ -4,6 +4,46 @@ All notable changes to the "require-on-rails" extension will be documented in th
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [Unreleased]
+
+### Added
+
+### Changed
+
+### Fixed
+
+## [2.2.0] - 2026-07-27
+
+### Extension
+
+#### Added
+- **Verbose alias-generation logging**: The RequireOnRails output channel is now a VS Code `LogOutputChannel`, so verbosity is set from the Output panel's gear icon (or `Developer: Set Log Level...`) instead of an extension setting. At **Debug** level, alias generation explains every decision it makes: which scan roots resolved, which directories were pruned and by which `ignoreDirectories` pattern, every file aliased or skipped and why, why `pathPriority` did or did not break an ambiguous name, and a summary of the run. **Trace** additionally dumps the full basename and alias sets.
+- **Workspace-requested command approval**: When a workspace sets `onAliasesRegenerated`, the commands are still not run, but the user is now told what the workspace wanted, can review the exact commands, and can approve them for that workspace. Approvals are stored in VS Code's per-workspace state — not in settings and not in the repository — so approving one project's commands does not run them in any other workspace, a repository cannot approve itself, and changing an approved command invalidates the approval and re-prompts.
+
+#### Fixed
+- **`onAliasesRegenerated` scope was not actually enforced**: The setting was documented as user-settings-only, but was read with a plain `config.get`, so workspace and folder settings were executed. It is now read from user scope only. (This is enforced in code rather than with a `machine` scope declaration, because VS Code strips machine-scoped values out of the workspace configuration before the extension can see them, which would make the new notification impossible.)
+- **Alias paths on macOS and Linux**: Alias values were built by stripping `workspaceRoot + '\\'`, a hardcoded Windows separator, so on other platforms the prefix was never removed and aliases became absolute paths — which also silently broke `pathPriority` prefix matching. Both sites now use `path.relative`.
+- **Alias settings did not trigger regeneration**: Changing `directoriesToScan`, `ignoreDirectories`, `pathPriority`, or `manualAliases` only took effect via an incidental `settings.json` file watcher, which missed changes made in User (global) settings. These settings now trigger a regeneration directly.
+- **Test runners could not launch VS Code from within VS Code**: The runners inherited `ELECTRON_RUN_AS_NODE=1` from the surrounding extension host and passed it to the VS Code they download, which then started as a plain Node process and rejected every CLI flag. They also pointed `extensionDevelopmentPath` at `test/`, which holds no extension manifest.
+
+#### Removed
+- Unused `adjustLuaurcWithSeparation` and `hasInitInParentDirs` helpers (no callers).
+
+---
+
+## [0.3.0] - 2026-05-20
+
+### Extension
+
+#### Added
+- **Post-Regeneration Commands** (`onAliasesRegenerated`): New application-scoped setting accepts an array of shell commands to execute from the workspace root after every alias regeneration cycle. Commands run serially within a batch, and if another regeneration fires while commands are still in-flight, the new request is queued (latest-wins) to prevent overlapping duplicate runs.
+
+#### Fixed
+- **`regenerateAliases` command not functional**: The `require-on-rails.regenerateAliases` command was declared in `package.json` but never registered at runtime. It now correctly calls `generateFileAliases()` when invoked.
+- **`onAliasesRegenerated` type guard**: The setting value is now validated with `Array.isArray` before use, and each element is filtered to non-empty strings. A misconfigured non-array value (e.g. an accidental string) is safely ignored rather than being iterated character-by-character as individual shell commands.
+
+---
+
 ## [0.2.0] - 2026-04-16
 
 ### Luau Module (v0.2.0)

@@ -90,6 +90,117 @@ suite('File Alias Generation Tests', () => {
         }
     });
 
+    test('pathPriority: should resolve ambiguous alias when highest-priority path has a single match', async () => {
+        const duplicateFile = path.join(testWorkspacePath, 'src/Client/Config.luau');
+        fs.writeFileSync(duplicateFile, 'local ClientConfig = {}\nreturn ClientConfig');
+
+        const restore = mockWorkspaceConfig(testWorkspaceUri, {
+            directoriesToScan: ['src/Server', 'src/Client', 'src/Shared'],
+            manualAliases: {},
+            pathPriority: ['src/Client']
+        });
+
+        try {
+            generateFileAliases();
+
+            const luaurcPath = path.join(testWorkspacePath, '.luaurc');
+            const luaurcContent = JSON.parse(fs.readFileSync(luaurcPath, 'utf8'));
+
+            assert.ok(luaurcContent.aliases.Config, 'Config should be resolved by pathPriority');
+            assert.strictEqual(luaurcContent.aliases.Config, 'src/Client/Config.luau', 'Config should resolve to the only src/Client match');
+        } finally {
+            restore();
+            fs.unlinkSync(duplicateFile);
+        }
+    });
+
+    test('pathPriority: should remain ambiguous when highest-priority path has multiple matches', async () => {
+        const duplicateFileA = path.join(testWorkspacePath, 'src/Client/Config.luau');
+        const duplicateDirB = path.join(testWorkspacePath, 'src/Client/Sub');
+        const duplicateFileB = path.join(duplicateDirB, 'Config.luau');
+        fs.mkdirSync(duplicateDirB, { recursive: true });
+        fs.writeFileSync(duplicateFileA, 'local ClientConfigA = {}\nreturn ClientConfigA');
+        fs.writeFileSync(duplicateFileB, 'local ClientConfigB = {}\nreturn ClientConfigB');
+
+        const restore = mockWorkspaceConfig(testWorkspaceUri, {
+            directoriesToScan: ['src/Server', 'src/Client', 'src/Shared'],
+            manualAliases: {},
+            pathPriority: ['src/Client', 'src/Shared']
+        });
+
+        try {
+            generateFileAliases();
+
+            const luaurcPath = path.join(testWorkspacePath, '.luaurc');
+            const luaurcContent = JSON.parse(fs.readFileSync(luaurcPath, 'utf8'));
+
+            assert.ok(!luaurcContent.aliases.Config, 'Config should remain ambiguous when highest-priority path ties');
+        } finally {
+            restore();
+            fs.rmSync(path.join(testWorkspacePath, 'src/Client/Sub'), { recursive: true, force: true });
+            if (fs.existsSync(duplicateFileA)) {
+                fs.unlinkSync(duplicateFileA);
+            }
+        }
+    });
+
+    test('pathPriority: should remain ambiguous when no candidates match any priority path', async () => {
+        const duplicateFile = path.join(testWorkspacePath, 'src/Client/Config.luau');
+        fs.writeFileSync(duplicateFile, 'local ClientConfig = {}\nreturn ClientConfig');
+
+        const restore = mockWorkspaceConfig(testWorkspaceUri, {
+            directoriesToScan: ['src/Server', 'src/Client', 'src/Shared'],
+            manualAliases: {},
+            pathPriority: ['Packages']
+        });
+
+        try {
+            generateFileAliases();
+
+            const luaurcPath = path.join(testWorkspacePath, '.luaurc');
+            const luaurcContent = JSON.parse(fs.readFileSync(luaurcPath, 'utf8'));
+
+            assert.ok(!luaurcContent.aliases.Config, 'Config should remain ambiguous when no pathPriority entries match');
+        } finally {
+            restore();
+            fs.unlinkSync(duplicateFile);
+        }
+    });
+
+    test('pathPriority: should remain ambiguous when higher priority ties even if lower priority has a unique match', async () => {
+        const serverDirA = path.join(testWorkspacePath, 'src/Server/Combat');
+        const serverDirB = path.join(testWorkspacePath, 'src/Server/System');
+        const clientDir = path.join(testWorkspacePath, 'src/Client');
+        const serverFileA = path.join(serverDirA, 'Weapon.luau');
+        const serverFileB = path.join(serverDirB, 'Weapon.luau');
+        const clientFile = path.join(clientDir, 'Weapon.luau');
+
+        fs.mkdirSync(serverDirA, { recursive: true });
+        fs.mkdirSync(serverDirB, { recursive: true });
+        fs.mkdirSync(clientDir, { recursive: true });
+        fs.writeFileSync(serverFileA, 'local WeaponA = {}\nreturn WeaponA');
+        fs.writeFileSync(serverFileB, 'local WeaponB = {}\nreturn WeaponB');
+        fs.writeFileSync(clientFile, 'local WeaponClient = {}\nreturn WeaponClient');
+
+        const restore = mockWorkspaceConfig(testWorkspaceUri, {
+            directoriesToScan: ['src/Server', 'src/Client'],
+            manualAliases: {},
+            pathPriority: ['src/Server', 'src/Client']
+        });
+
+        try {
+            generateFileAliases();
+
+            const luaurcPath = path.join(testWorkspacePath, '.luaurc');
+            const luaurcContent = JSON.parse(fs.readFileSync(luaurcPath, 'utf8'));
+
+            assert.ok(!luaurcContent.aliases.Weapon, 'Weapon should remain ambiguous because highest-priority path has multiple matches');
+        } finally {
+            restore();
+            cleanupTestFiles(testWorkspacePath, ['src/Server/Combat', 'src/Server/System', 'src/Client/Weapon.luau']);
+        }
+    });
+
     test('Should handle files with same basename in different subdirectories', async () => {
         const testDirs = ['src/Server/Combat', 'src/Client/Combat'];
         for (const dir of testDirs) {
@@ -243,6 +354,152 @@ suite('File Alias Generation Tests', () => {
                 const fullPath = path.join(testWorkspacePath, filePath);
                 if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
             }
+        }
+    });
+
+    // --- ignoreDirectories pattern tests ---
+
+    test('ignoreDirectories: name-only pattern ignores matching directory under any scan root', () => {
+        createTestFiles(testWorkspacePath, {
+            'src/Server/Ignorable/IgnorableModule.luau': 'return {}',
+            'src/Client/Ignorable/AlsoIgnored.luau': 'return {}',
+            'src/Server/Visible/VisibleModule.luau': 'return {}'
+        });
+
+        const restore = mockWorkspaceConfig(testWorkspaceUri, {
+            directoriesToScan: ['src/Server', 'src/Client'],
+            ignoreDirectories: ['Ignorable']
+        });
+
+        try {
+            generateFileAliases();
+
+            const luaurcContent = JSON.parse(fs.readFileSync(path.join(testWorkspacePath, '.luaurc'), 'utf8'));
+            assert.ok(!luaurcContent.aliases.IgnorableModule, 'Should ignore file under Ignorable in Server');
+            assert.ok(!luaurcContent.aliases.AlsoIgnored, 'Should ignore file under Ignorable in Client');
+            assert.ok(luaurcContent.aliases.VisibleModule, 'Should include file not under ignored dir');
+        } finally {
+            restore();
+            cleanupTestFiles(testWorkspacePath, [
+                'src/Server/Ignorable',
+                'src/Client/Ignorable',
+                'src/Server/Visible'
+            ]);
+        }
+    });
+
+    test('ignoreDirectories: workspace-relative path pattern ignores only the specific path', () => {
+        createTestFiles(testWorkspacePath, {
+            'src/Server/Private/SecretA.luau': 'return {}',
+            'src/Client/Private/SecretB.luau': 'return {}',
+        });
+
+        const restore = mockWorkspaceConfig(testWorkspaceUri, {
+            directoriesToScan: ['src/Server', 'src/Client'],
+            ignoreDirectories: ['src/Server/Private']
+        });
+
+        try {
+            generateFileAliases();
+
+            const luaurcContent = JSON.parse(fs.readFileSync(path.join(testWorkspacePath, '.luaurc'), 'utf8'));
+            assert.ok(!luaurcContent.aliases.SecretA, 'Should ignore file under src/Server/Private');
+            assert.ok(luaurcContent.aliases.SecretB, 'Should NOT ignore src/Client/Private — pattern is specific to Server');
+        } finally {
+            restore();
+            cleanupTestFiles(testWorkspacePath, ['src/Server/Private', 'src/Client/Private']);
+        }
+    });
+
+    test('ignoreDirectories: workspace-relative path pattern works for deeply nested directory', () => {
+        createTestFiles(testWorkspacePath, {
+            'src/Shared/Deep/Nested/Target/HiddenModule.luau': 'return {}',
+            'src/Shared/Deep/Nested/OtherModule.luau': 'return {}'
+        });
+
+        const restore = mockWorkspaceConfig(testWorkspaceUri, {
+            directoriesToScan: ['src/Shared'],
+            ignoreDirectories: ['src/Shared/Deep/Nested/Target']
+        });
+
+        try {
+            generateFileAliases();
+
+            const luaurcContent = JSON.parse(fs.readFileSync(path.join(testWorkspacePath, '.luaurc'), 'utf8'));
+            assert.ok(!luaurcContent.aliases.HiddenModule, 'Should ignore file inside deeply nested targeted path');
+            assert.ok(luaurcContent.aliases.OtherModule, 'Should include sibling outside targeted path');
+        } finally {
+            restore();
+            cleanupTestFiles(testWorkspacePath, ['src/Shared/Deep']);
+        }
+    });
+
+    test('ignoreDirectories: Windows-style path pattern with backslashes ignores only the specific path', () => {
+        createTestFiles(testWorkspacePath, {
+            'src/Server/Private/SecretA.luau': 'return {}',
+            'src/Client/Private/SecretB.luau': 'return {}'
+        });
+
+        const restore = mockWorkspaceConfig(testWorkspaceUri, {
+            directoriesToScan: ['src/Server', 'src/Client'],
+            ignoreDirectories: ['src\\Server\\Private']
+        });
+
+        try {
+            generateFileAliases();
+
+            const luaurcContent = JSON.parse(fs.readFileSync(path.join(testWorkspacePath, '.luaurc'), 'utf8'));
+            assert.ok(!luaurcContent.aliases.SecretA, 'Should ignore file under src/Server/Private when pattern uses backslashes');
+            assert.ok(luaurcContent.aliases.SecretB, 'Should NOT ignore src/Client/Private — pattern is specific to Server');
+        } finally {
+            restore();
+            cleanupTestFiles(testWorkspacePath, ['src/Server/Private', 'src/Client/Private']);
+        }
+    });
+
+    test('ignoreDirectories: regex with / matches workspace-relative path', () => {
+        createTestFiles(testWorkspacePath, {
+            'src/Server/Feature/Internal/PrivateImpl.luau': 'return {}',
+            'src/Server/Feature/PublicApi.luau': 'return {}'
+        });
+
+        const restore = mockWorkspaceConfig(testWorkspaceUri, {
+            directoriesToScan: ['src/Server'],
+            ignoreDirectories: ['Feature/Internal']
+        });
+
+        try {
+            generateFileAliases();
+
+            const luaurcContent = JSON.parse(fs.readFileSync(path.join(testWorkspacePath, '.luaurc'), 'utf8'));
+            assert.ok(!luaurcContent.aliases.PrivateImpl, 'Should ignore file under Feature/Internal (unanchored path regex)');
+            assert.ok(luaurcContent.aliases.PublicApi, 'Should include sibling file not under Internal');
+        } finally {
+            restore();
+            cleanupTestFiles(testWorkspacePath, ['src/Server/Feature']);
+        }
+    });
+
+    test('ignoreDirectories: anchored name pattern ^_* does not affect non-prefixed dirs', () => {
+        createTestFiles(testWorkspacePath, {
+            'src/Server/_InternalDir/HiddenFile.luau': 'return {}',
+            'src/Server/PublicDir/VisibleFile.luau': 'return {}'
+        });
+
+        const restore = mockWorkspaceConfig(testWorkspaceUri, {
+            directoriesToScan: ['src/Server'],
+            ignoreDirectories: ['^_.*']
+        });
+
+        try {
+            generateFileAliases();
+
+            const luaurcContent = JSON.parse(fs.readFileSync(path.join(testWorkspacePath, '.luaurc'), 'utf8'));
+            assert.ok(!luaurcContent.aliases.HiddenFile, 'Should ignore file under _-prefixed directory');
+            assert.ok(luaurcContent.aliases.VisibleFile, 'Should include file under non-prefixed directory');
+        } finally {
+            restore();
+            cleanupTestFiles(testWorkspacePath, ['src/Server/_InternalDir', 'src/Server/PublicDir']);
         }
     });
 });

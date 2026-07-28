@@ -2,7 +2,7 @@
   "name": "require-on-rails",
   "displayName": "RequireOnRails",
   "description": "An opinionated Roblox Luau utility extension to simplify working with complex codebase hierarchies",
-  "version": "0.2.0",
+  "version": "2.2.0",
   "publisher": "Raild3x",
   "icon": "images/icon_v2.png",
   "repository": {
@@ -41,14 +41,6 @@
       {
         "command": "require-on-rails.checkForUpdates",
         "title": "Check for RequireOnRails Package Updates"
-      },
-      {
-        "command": "require-on-rails.checkRobloxYml",
-        "title": "Check and Fix roblox.yml Files"
-      },
-      {
-        "command": "require-on-rails.generateRobloxYml",
-        "title": "Generate roblox.yml with Selene"
       }
     ],
     "configuration": {
@@ -119,11 +111,6 @@
           ],
           "description": "Controls where the import require definition is placed when automatically added to files"
         },
-        "require-on-rails.addSeleneCommentToImport": {
-          "type": "boolean",
-          "default": false,
-          "description": "Whether to add a comment to the import require definition to disable Selene warnings for that line."
-        },
         "require-on-rails.directoriesToScan": {
           "type": "array",
           "default": [
@@ -158,10 +145,26 @@
             "type": "string"
           }
         },
+        "require-on-rails.pathPriority": {
+          "type": "array",
+          "default": [],
+          "description": "Ordered path prefixes used to resolve ambiguous auto-generated aliases. Earlier entries are higher priority. An ambiguous basename is resolved only when exactly one candidate matches the highest-priority matched prefix; if multiple candidates match that same highest-priority prefix, it remains ambiguous.",
+          "items": {
+            "type": "string"
+          }
+        },
         "require-on-rails.skipUpdateNotificationForVersion": {
           "type": "string",
           "default": "",
           "description": "Version to skip update notifications for (set automatically when user clicks 'Don't Show Again')"
+        },
+        "require-on-rails.onAliasesRegenerated": {
+          "type": "array",
+          "default": [],
+          "description": "Shell commands to run after aliases are regenerated. Each command is executed from the workspace root. Only commands set in your own User settings are ever run; if a workspace sets this, RequireOnRails ignores the commands and notifies you so you can review them and opt in.",
+          "items": {
+            "type": "string"
+          }
         }
       }
     }

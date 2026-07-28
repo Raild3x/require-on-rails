@@ -7,6 +7,7 @@ function createMockConfig(overrides = {}) {
     const defaults = {
         directoriesToScan: ['src/Server', 'src/Client', 'src/Shared', 'Packages'],
         ignoreDirectories: ['^_.*'],
+        pathPriority: [],
         supportedExtensions: ['.lua', '.luau'],
         enableAbsolutePathUpdates: true,
         enableFileNameCollisionResolution: false,
@@ -15,8 +16,7 @@ function createMockConfig(overrides = {}) {
         importModulePaths: ['ReplicatedStorage.src._Import'],
         tryToAddImportRequire: true,
         importOpacity: 0.45,
-        preferImportPlacement: 'BeforeFirstRequire',
-        addSeleneCommentToImport: false, // Add the missing configuration property
+        preferredImportPlacement: 'BeforeFirstRequire',
         manualAliases: {
             '@Server': 'src/Server',
             '@Client': 'src/Client', 
@@ -31,7 +31,12 @@ function createMockConfig(overrides = {}) {
             return config.hasOwnProperty(key) ? config[key] : defaultValue;
         },
         has: (key) => config.hasOwnProperty(key),
-        inspect: () => undefined,
+        inspect: (key) => {
+            if (config.hasOwnProperty(key)) {
+                return { workspaceFolderValue: undefined, workspaceValue: config[key], globalValue: undefined, defaultValue: undefined };
+            }
+            return { workspaceFolderValue: undefined, workspaceValue: undefined, globalValue: undefined, defaultValue: undefined };
+        },
         update: () => Promise.resolve()
     };
 }

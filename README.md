@@ -118,6 +118,16 @@ Adjust these key settings to match your project structure in your VS Code settin
         "Shared": "src/Shared"
     },
 
+    // Ordered path prefixes used to resolve ambiguous basename aliases.
+    // Earlier entries are higher priority.
+    // Resolution only occurs if exactly one candidate matches the
+    // highest-priority matched prefix.
+    "require-on-rails.pathPriority": [
+      "src/Server",
+      "src/Client",
+      "src/Shared"
+    ],
+
     // This is the path to the importer you generate via the RequireOnRails 
     // luau module. This path should be in Roblox hierarchy terms.
     "require-on-rails.importModulePaths": [
@@ -134,7 +144,7 @@ Adjust these key settings to match your project structure in your VS Code settin
 
 ### 2. Project Structure
 Ensure your project follows a structure where:
-- Files have unique basenames across all scanned directories
+- Files ideally have unique basenames across scanned directories, or use `pathPriority` to resolve selected collisions
 - Directory structure matches your `.vscode/settings.json` configuration
 - Import system is properly configured
 
@@ -226,7 +236,7 @@ All options are passed to `RequireOnRails.create { … }`:
 
 ## Important Notes
 
-⚠️ **Unique Basenames Required**: All files in scanned directories must have unique basenames. If you have `PlayerService.luau` in both Server and Client directories, no alias will be generated to avoid ambiguity.
+⚠️ **Ambiguous Basenames**: Duplicate basenames across scanned directories are ambiguous by default and no alias is generated. You can set `pathPriority` to resolve some collisions, but only if exactly one candidate matches the highest-priority matched path.
 
 ⚠️ **Configuration Required**: You must configure `directoriesToScan` and `importModulePaths` to match your specific project structure.
 
@@ -324,6 +334,45 @@ This extension contributes the following settings through `require-on-rails.*`:
   - **Default**: `{"Server": "src/Server", "Client": "src/Client", "Shared": "src/Shared"}`
   - **Description**: Manual aliases for absolute path support. Maps alias names to their corresponding directory paths (relative to workspace root). Used for absolute require path updates when files are moved between different alias directories.
 
+* `require-on-rails.pathPriority`:
+  - **Type**: `array<string>`
+  - **Default**: `[]`
+  - **Description**: Ordered path prefixes used to resolve ambiguous auto-generated aliases. Earlier entries are higher priority. If exactly one candidate for a basename matches the highest-priority matched prefix, that alias is generated. If multiple candidates match that same highest-priority prefix, the alias remains ambiguous and is not generated.
+
+### Post-Processing
+
+* `require-on-rails.onAliasesRegenerated`:
+  - **Type**: `array<string>`
+  - **Default**: `[]`
+  - **Scope**: Set it in your User settings to run commands in *every* workspace. A workspace may also request commands, but those only run in that workspace and only after you approve them (see below).
+  - **Description**: Shell commands to run after aliases are regenerated. Each command is executed from the workspace root. Commands run serially within a batch; rapid file changes that trigger multiple regenerations will queue at most one pending run, preventing duplicate concurrent executions. Skipped entirely in untrusted workspaces.
+  - **Example**:
+    ```jsonc
+    "require-on-rails.onAliasesRegenerated": [
+        "npm run sync-aliases"
+    ]
+    ```
+
+**If a project you open sets this**, RequireOnRails will *not* run its commands — otherwise
+cloning a repository would be enough to execute arbitrary shell commands on your machine.
+Instead you get a notification saying how many commands the workspace wants to run. Choosing
+**Review Commands** shows you exactly what they are, and from there you can approve them.
+Nothing runs until you do.
+
+Approval applies **to that workspace only**. It is recorded in VS Code's own per-workspace
+storage, not in your settings and not in the repository, so:
+
+* approving a project's `npm run sync-aliases` does not cause it to run in your other projects
+* the repository cannot approve itself by committing a settings file
+* the approval covers the exact commands you saw. If the repository later changes one, the
+  approval no longer matches it and you are asked again
+
+Put commands in your **User** settings instead if you genuinely want them in every workspace.
+
+The commands are also written to the RequireOnRails output channel, so you can read them
+without acting on the notification. If you dismiss it, it reappears the next time the
+workspace asks for a set of commands you haven't approved.
+
 ## Commands
 
 RequireOnRails provides the following commands accessible via Command Palette (`Ctrl+Shift+P`):
@@ -344,6 +393,31 @@ RequireOnRails provides the following commands accessible via Command Palette (`
 - Check that `directoriesToScan` matches your actual directory structure
 - Ensure file basenames are unique across all scanned directories
 - Verify RequireOnRails is activated (check status bar)
+- **Turn on verbose logging** (below) — it names the exact rule that rejected each file
+
+**Q: A specific file isn't getting an alias and I can't tell why**
+
+Turn the log level up and RequireOnRails will explain every decision it makes:
+
+1. Open the **Output** panel (`Ctrl+Shift+U`) and pick **RequireOnRails** from the dropdown
+2. Click the gear icon on that panel and choose **Debug** (or run **Developer: Set Log Level...** from the Command Palette)
+3. Run **RequireOnRails: Regenerate Aliases (Debug)**
+
+The log then shows which directories were scanned versus pruned (and which
+`ignoreDirectories` pattern pruned them), every file added or skipped with the
+reason, why `pathPriority` did or didn't break an ambiguous name, and a summary
+of the whole run. **Trace** additionally dumps the full basename and alias sets.
+
+Common reasons a file is skipped:
+
+| Reason | Fix |
+| --- | --- |
+| Its name contains `.server` or `.client` | Expected — these are context-scoped and never aliased |
+| A parent directory matched `ignoreDirectories` | Adjust the pattern (note: it's an unanchored regex, so `Foo` also matches `MyFooBar`) |
+| Another file shares its basename (ambiguous) | Rename one, or add a `pathPriority` prefix to pick a winner |
+| Its directory has an `init.luau` | Expected — the folder name becomes the alias instead |
+| Its name matches a `manualAliases` key | Manual aliases always win; rename one of them |
+| Its scan root doesn't exist | Fix the `directoriesToScan` entry (this also logs a warning at the default level) |
 
 **Q: Import require prompts not working**
 - Verify `importModulePaths` points to your actual import module location
