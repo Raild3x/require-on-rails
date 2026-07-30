@@ -97,6 +97,14 @@ function enableEventListeners() {
             //print(`File renamed from ${file.oldUri.fsPath} to ${file.newUri.fsPath}`);
             updateRequireNames(file.newUri.fsPath, file.oldUri.fsPath);
         });
+        // Renaming a *folder* only emits watcher events for the folder path, which matches
+        // neither **/*.luau nor **/*.lua, so the watchers never fire. A folder holding an
+        // init file owns an alias named after the folder, and every file under a renamed
+        // folder has a stale alias path, so regenerate here instead.
+        // ponytail: only covers renames made through VS Code; external renames (git checkout,
+        // OS file explorer) still need a manual "Regenerate Aliases". Add a '**' directory
+        // watcher if that turns out to matter.
+        debouncedGenerateFileAliases();
     });
     eventListenerDisposables.push(renameListener);
 }

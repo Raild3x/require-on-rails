@@ -9,6 +9,7 @@ const { generateFileAliases } = require('../../../src/features/updateLuaFileAlia
 // Import shared test utilities
 const {
     mockWorkspaceConfig,
+    mockVSCodeMessages,
     createTestFiles,
     cleanupTestFiles,
     setupTestWorkspace
@@ -502,4 +503,121 @@ suite('File Alias Generation Tests', () => {
             cleanupTestFiles(testWorkspacePath, ['src/Server/_InternalDir', 'src/Server/PublicDir']);
         }
     });
+
+    // The other tests in this suite call generateFileAliases() directly, so they cannot catch a
+    // regression in what *triggers* it. Renaming a folder emits watcher events for the folder
+    // path, which matches neither **/*.luau nor **/*.lua, so the onDidRenameFiles listener is the
+    // only thing that regenerates aliases after a folder rename.
+    test('Renaming a folder with an init file regenerates aliases', async () => {
+        createTestFiles(testWorkspacePath, {
+            'src/Server/OldFolder/init.luau': 'return {}'
+        });
+
+        const restore = mockWorkspaceConfig(testWorkspaceUri, {
+            directoriesToScan: ['src/Server'],
+            startsImmediately: true,
+            enableBasenameUpdates: false,
+            enableAbsolutePathUpdates: false,
+            enableFileNameCollisionResolution: false,
+            manualAliases: {}
+        });
+        const messages = mockVSCodeMessages();
+        const mocks = mockActivationHost();
+
+        try {
+            require('../../../src/extension').activate({
+                extensionUri: vscode.Uri.file(testWorkspacePath),
+                extensionPath: testWorkspacePath,
+                globalState: { get: () => undefined, update: () => Promise.resolve() },
+                workspaceState: { get: () => undefined, update: () => Promise.resolve() },
+                subscriptions: []
+            });
+
+            assert.ok(mocks.renameHandler, 'Activation should register an onDidRenameFiles listener');
+
+            const luaurcPath = path.join(testWorkspacePath, '.luaurc');
+            const before = JSON.parse(fs.readFileSync(luaurcPath, 'utf8'));
+            assert.strictEqual(before.aliases.OldFolder, 'src/Server/OldFolder/init.luau',
+                'Folder alias should exist before the rename');
+
+            const oldDir = path.join(testWorkspacePath, 'src/Server/OldFolder');
+            const newDir = path.join(testWorkspacePath, 'src/Server/NewFolder');
+            fs.renameSync(oldDir, newDir);
+
+            mocks.renameHandler({
+                files: [{ oldUri: vscode.Uri.file(oldDir), newUri: vscode.Uri.file(newDir) }]
+            });
+
+            // Regeneration is debounced by 500ms in extension.js.
+            await new Promise(resolve => setTimeout(resolve, 900));
+
+            const after = JSON.parse(fs.readFileSync(luaurcPath, 'utf8'));
+            assert.strictEqual(after.aliases.NewFolder, 'src/Server/NewFolder/init.luau',
+                'Folder rename should produce an alias under the new folder name');
+            assert.ok(!after.aliases.OldFolder, 'Stale alias for the old folder name should be gone');
+        } finally {
+            mocks.restore();
+            messages.restore();
+            restore();
+            cleanupTestFiles(testWorkspacePath, ['src/Server/OldFolder', 'src/Server/NewFolder']);
+        }
+    });
 });
+
+// Stubs just enough of the vscode host for activate() to run, and captures the
+// onDidRenameFiles handler so a rename can be simulated.
+function mockActivationHost() {
+    const noopDisposable = { dispose: () => {} };
+    const originals = {
+        createOutputChannel: vscode.window.createOutputChannel,
+        createStatusBarItem: vscode.window.createStatusBarItem,
+        registerCommand: vscode.commands.registerCommand,
+        createFileSystemWatcher: vscode.workspace.createFileSystemWatcher,
+        onDidRenameFiles: vscode.workspace.onDidRenameFiles,
+        onDidChangeConfiguration: vscode.workspace.onDidChangeConfiguration,
+        onDidChangeActiveTextEditor: vscode.window.onDidChangeActiveTextEditor,
+        onDidChangeTextDocument: vscode.workspace.onDidChangeTextDocument,
+        onDidOpenTextDocument: vscode.workspace.onDidOpenTextDocument
+    };
+
+    const captured = { renameHandler: null };
+
+    vscode.window.createOutputChannel = () => ({
+        appendLine: () => {}, append: () => {}, replace: () => {}, clear: () => {},
+        show: () => {}, hide: () => {}, dispose: () => {},
+        trace: () => {}, debug: () => {}, info: () => {}, warn: () => {}, error: () => {}
+    });
+    vscode.window.createStatusBarItem = () => ({
+        text: '', tooltip: '', command: '', show: () => {}, hide: () => {}, dispose: () => {}
+    });
+    vscode.commands.registerCommand = () => noopDisposable;
+    vscode.workspace.createFileSystemWatcher = () => ({
+        onDidCreate: () => noopDisposable,
+        onDidDelete: () => noopDisposable,
+        onDidChange: () => noopDisposable,
+        dispose: () => {}
+    });
+    vscode.workspace.onDidRenameFiles = (handler) => {
+        captured.renameHandler = handler;
+        return noopDisposable;
+    };
+    vscode.workspace.onDidChangeConfiguration = () => noopDisposable;
+    vscode.window.onDidChangeActiveTextEditor = () => noopDisposable;
+    vscode.workspace.onDidChangeTextDocument = () => noopDisposable;
+    vscode.workspace.onDidOpenTextDocument = () => noopDisposable;
+
+    return {
+        get renameHandler() { return captured.renameHandler; },
+        restore: () => {
+            vscode.window.createOutputChannel = originals.createOutputChannel;
+            vscode.window.createStatusBarItem = originals.createStatusBarItem;
+            vscode.commands.registerCommand = originals.registerCommand;
+            vscode.workspace.createFileSystemWatcher = originals.createFileSystemWatcher;
+            vscode.workspace.onDidRenameFiles = originals.onDidRenameFiles;
+            vscode.workspace.onDidChangeConfiguration = originals.onDidChangeConfiguration;
+            vscode.window.onDidChangeActiveTextEditor = originals.onDidChangeActiveTextEditor;
+            vscode.workspace.onDidChangeTextDocument = originals.onDidChangeTextDocument;
+            vscode.workspace.onDidOpenTextDocument = originals.onDidOpenTextDocument;
+        }
+    };
+}
