@@ -4,6 +4,11 @@ function setOutputChannel(channel) {
     outputChannel = channel;
 }
 
+// Reveals the RequireOnRails output channel, for notifications that offer a "Show Details".
+function showOutputChannel() {
+    if (outputChannel && typeof outputChannel.show === 'function') outputChannel.show(true);
+}
+
 function format(args) {
     return args.map(a => {
         if (typeof a === 'string') return a;
@@ -61,6 +66,7 @@ function trace(...args) {
 
 module.exports = {
     setOutputChannel,
+    showOutputChannel,
     print,
     warn,
     error,

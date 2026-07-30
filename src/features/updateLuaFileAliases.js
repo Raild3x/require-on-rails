@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { exec } = require('child_process');
 const vscode = require('vscode');
-const { print, warn, error, debug, trace } = require('../core/logger');
+const { print, warn, error, debug, trace, showOutputChannel } = require('../core/logger');
 
 const extenionName = 'require-on-rails';
 const supportedExtensions = ['.lua', '.luau'];
@@ -330,6 +330,51 @@ function announceWorkspaceCommands(pending) {
     });
 }
 
+// Ambiguity is re-detected on every regeneration, which fires on every file change, so the
+// notification is tied to *what* is ambiguous rather than to each run. Storing the last
+// announced set (instead of every set ever seen) means clearing an ambiguity and reintroducing
+// it warns again, while an unchanged ambiguity stays quiet.
+let _lastAmbiguousSignature = null;
+
+function resetAmbiguityNotificationState() {
+    _lastAmbiguousSignature = null;
+}
+
+// Deliberately a non-modal warning: warnings persist in the notification area until the user
+// dismisses them, so it still needs acknowledging, but it cannot stack up a modal dialog on a
+// hot path that runs after every file change.
+function announceAmbiguousAliases(ambiguousAliases) {
+    const names = Object.keys(ambiguousAliases).sort();
+    const signature = JSON.stringify(names);
+    if (signature === _lastAmbiguousSignature) return;
+    _lastAmbiguousSignature = signature;
+
+    if (names.length === 0) return;
+
+    const summary = names.length === 1
+        ? `alias "${names[0]}" is ambiguous`
+        : `${names.length} aliases are ambiguous (${names.slice(0, 3).join(', ')}${names.length > 3 ? ', …' : ''})`;
+
+    warn(`${summary}. Requires of these names will not resolve:`);
+    names.forEach(name => warn(`    "${name}" found in: ${ambiguousAliases[name].join(', ')}`));
+
+    const showDetails = 'Show Details';
+    const showProblems = 'Show Problems';
+    vscode.window.showWarningMessage(
+        `RequireOnRails: ${summary}, so no alias was generated for ${names.length === 1 ? 'it' : 'them'}. ` +
+        `Requires using ${names.length === 1 ? 'that name' : 'those names'} will fail to resolve.`,
+        showDetails,
+        showProblems,
+        'Dismiss'
+    ).then(choice => {
+        if (choice === showDetails) {
+            showOutputChannel();
+        } else if (choice === showProblems) {
+            vscode.commands.executeCommand('workbench.actions.view.problems');
+        }
+    });
+}
+
 // Main function to generate file aliases
 function generateFileAliases() {
     const config = vscode.workspace.getConfiguration(extenionName);
@@ -414,8 +459,9 @@ function generateFileAliases() {
         compiledAliases[k] = v;
     }
 
-    // Track which aliases are ambiguous (multiple files with same basename)
-    const ambiguousAliases = new Set();
+    // Ambiguous aliases (multiple files with the same basename), mapped to the conflicting
+    // paths so both the notification and the Problems-panel diagnostics can name them.
+    const ambiguousAliases = {};
     // Track which aliases are unique (only one file with that basename)
     const uniqueAliases = {};
     for (const [basename, arr] of Object.entries(basenameMap)) {
@@ -431,7 +477,7 @@ function generateFileAliases() {
                 );
                 continue;
             }
-            ambiguousAliases.add(basename);
+            ambiguousAliases[basename] = arr.map(x => x.path);
             print(`Ambiguous alias: "${basename}" found in:`, arr.map(x => x.path));
 
             // Explain exactly why pathPriority did not break the tie.
@@ -462,7 +508,7 @@ function generateFileAliases() {
     debug(
         `--- Alias generation finished --- roots: ${rootDirs.length}, dirs scanned: ${stats.dirsScanned}, ` +
         `dirs pruned: ${stats.dirsPruned}, files seen: ${stats.filesSeen}, files skipped: ${stats.filesRejected}, ` +
-        `alias candidates: ${stats.filesAdded}, ambiguous names dropped: ${ambiguousAliases.size}, ` +
+        `alias candidates: ${stats.filesAdded}, ambiguous names dropped: ${Object.keys(ambiguousAliases).length}, ` +
         `shadowed by manualAliases: ${shadowedByManual}, written to .luaurc: ${Object.keys(compiledAliases).length}`
     );
 
@@ -477,6 +523,10 @@ function generateFileAliases() {
     // Write with proper JSON formatting
     const luaurcString = JSON.stringify(finalLuaurc, null, 4);
     fs.writeFileSync(luaurcPath, luaurcString);
+
+    // An ambiguous name silently produces no alias, so every require of it breaks. Warn the
+    // user directly; extension.js turns the returned map into Problems-panel diagnostics.
+    announceAmbiguousAliases(ambiguousAliases);
 
     // Run post-regeneration scripts. Commands come from the user's own settings (which they
     // chose for every workspace) plus anything they explicitly approved for this workspace.
@@ -500,6 +550,16 @@ function generateFileAliases() {
             _scheduleAliasCommands(toRun, workspaceRoot);
         }
     }
+
+    return { aliases: compiledAliases, ambiguousAliases };
 }
 
-module.exports = { generateFileAliases, setExtensionContext };
+module.exports = {
+    generateFileAliases,
+    setExtensionContext,
+    resetAmbiguityNotificationState,
+    // Exported so aliasDiagnostics can prune the same directories with the same semantics,
+    // rather than growing a third copy of this matching logic.
+    compileIgnorePatterns,
+    findIgnoreMatch
+};

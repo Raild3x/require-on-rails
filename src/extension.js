@@ -1,6 +1,12 @@
 const vscode = require('vscode');
 const path = require('path');
-const { generateFileAliases, setExtensionContext } = require('./features/updateLuaFileAliases');
+const { generateFileAliases, setExtensionContext, resetAmbiguityNotificationState } = require('./features/updateLuaFileAliases');
+const {
+    refreshAliasDiagnostics,
+    setAmbiguousAliases,
+    clearAliasDiagnostics,
+    disposeAliasDiagnostics
+} = require('./features/aliasDiagnostics');
 const { updateRequireNames } = require('./features/updateRequireNames');
 const { hideLines, unhideLines } = require('./features/hideLines');
 const { unpackProjectTemplate } = require('./commands/unpackProjectTemplate');
@@ -91,6 +97,15 @@ function enableEventListeners() {
     });
     eventListenerDisposables.push(documentOpenListener);
 
+    // Alias *requires* live in file contents, but the .lua/.luau watchers deliberately ignore
+    // change events (contents cannot change the alias set), so a save is the only signal that
+    // a require was added, removed, or fixed. Only the diagnostics need refreshing here.
+    const saveListener = vscode.workspace.onDidSaveTextDocument((document) => {
+        if (document.languageId !== 'luau' && document.languageId !== 'lua') return;
+        refreshAliasDiagnostics();
+    });
+    eventListenerDisposables.push(saveListener);
+
     // Listen for file renames (future: update require names)
     const renameListener = vscode.workspace.onDidRenameFiles((event) => {
         event.files.forEach((file) => {
@@ -127,7 +142,7 @@ function enableExtensionFeatures() {
     enableWatchers();
     enableEventListeners();
 
-    generateFileAliases();
+    regenerateAliasesAndDiagnostics();
     setStatusBarText();
 }
 
@@ -138,6 +153,11 @@ function disableExtensionFeatures() {
     disableEventListeners();
 
     setStatusBarText();
+
+    // Stale squiggles would otherwise outlive the feature that produced them, and the next
+    // enable should re-warn about any ambiguity that is still present.
+    clearAliasDiagnostics();
+    resetAmbiguityNotificationState();
 
     unhideLines(vscode.window.activeTextEditor);
 }
@@ -175,9 +195,21 @@ const CONTEXTUAL_IMPORT_PLACEHOLDER = '{IMPORT_MODULE_PATH}';
 // Settings that change the generated alias set, and so must trigger a regeneration.
 const ALIAS_CONFIG_KEYS = ['directoriesToScan', 'ignoreDirectories', 'pathPriority', 'manualAliases'];
 
+// Every regeneration path goes through here, so alias diagnostics can never drift out of sync
+// with the .luaurc that was just written. generateFileAliases returns undefined when it bails
+// early (no workspace folder, unparseable .luaurc), in which case there is nothing to report on.
+function regenerateAliasesAndDiagnostics() {
+    const result = generateFileAliases();
+    if (!result) return result;
+
+    setAmbiguousAliases(result.ambiguousAliases);
+    refreshAliasDiagnostics();
+    return result;
+}
+
 function debouncedGenerateFileAliases() {
     if (isGeneratingAliases) return; // Prevent recursive calls
-    
+
     debouncePending = true;
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(async () => {
@@ -186,7 +218,7 @@ function debouncedGenerateFileAliases() {
             debouncePending = false;
             isGeneratingAliases = true;
             try {
-                await generateFileAliases();
+                await regenerateAliasesAndDiagnostics();
             } finally {
                 isGeneratingAliases = false;
             }
@@ -292,7 +324,10 @@ function activate(context) {
         // This command exists for debugging, so surface the log. Set the channel's level to
         // Debug (gear icon in the Output panel) to see every scan/skip decision.
         outputChannel.show(true);
-        generateFileAliases();
+        // Run unconditionally, so this stays usable for diagnosing a workspace where the
+        // ambiguity warning has already been dismissed this session.
+        resetAmbiguityNotificationState();
+        regenerateAliasesAndDiagnostics();
     });
 
     registerCommand(context, 'require-on-rails.checkForUpdates', async () => {
@@ -308,6 +343,7 @@ function activate(context) {
     context.subscriptions.push({
         dispose: () => {
             disableExtensionFeatures();
+            disposeAliasDiagnostics();
         }
     });
 

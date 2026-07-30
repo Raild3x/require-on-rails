@@ -7,10 +7,13 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 ## [Unreleased]
 
 ### Added
+- **Ambiguous alias notification**: When two or more files share a basename, no alias is generated for that name and every `require("@Name")` of it silently fails to resolve. This now raises a warning notification naming the conflicting aliases, with **Show Details** (opens the output channel, listing every conflicting path) and **Show Problems** actions. The notification persists until dismissed, and is raised once per distinct set of ambiguous names rather than on every regeneration, so it does not spam while you work. Clearing an ambiguity and reintroducing it warns again.
+- **Unresolved alias diagnostics**: `require("@Name")` statements that reference an alias which is not in `.luaurc` are now reported in the Problems panel with a squiggle on the alias itself. Diagnostics distinguish the two causes: `ambiguous-alias` (the name exists in multiple files and was dropped) names the conflicting files and points at `pathPriority`, while `unknown-alias` (no such module) points at `directoriesToScan`/`ignoreDirectories`. Only the first path segment is treated as the alias, so `require("@Shared/Utils/Thing")` checks `Shared`. Non-aliased requires, `@self`, and commented-out lines are left alone. Refreshes after each alias regeneration and on save, and respects `ignoreDirectories`.
 
 ### Changed
 
 ### Fixed
+- **Folder renames now regenerate aliases**: Renaming a folder emitted watcher events for the folder path, which matched neither `**/*.luau` nor `**/*.lua`, so nothing regenerated. A folder containing an `init.luau` owns an alias named after the folder, so renaming it left a stale alias under the old name and none under the new one; files under any renamed folder were also left with stale alias paths. Renames made through VS Code now trigger a regeneration. Renames made outside VS Code (e.g. `git checkout`, the OS file explorer) still need **Regenerate Aliases (Debug)**.
 
 ## [2.2.0] - 2026-07-27
 
