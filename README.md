@@ -359,6 +359,11 @@ Instead you get a notification saying how many commands the workspace wants to r
 **Review Commands** shows you exactly what they are, and from there you can approve them.
 Nothing runs until you do.
 
+You do not have to wait for that notification. **RequireOnRails: Manage Alias Regeneration
+Commands** in the Command Palette lists every command this workspace asks for, with the ones
+you have already approved checked. Check a command to approve it, uncheck it to revoke it.
+This is also the only way to withdraw an approval.
+
 Approval applies **to that workspace only**. It is recorded in VS Code's own per-workspace
 storage, not in your settings and not in the repository, so:
 
@@ -370,8 +375,10 @@ storage, not in your settings and not in the repository, so:
 Put commands in your **User** settings instead if you genuinely want them in every workspace.
 
 The commands are also written to the RequireOnRails output channel, so you can read them
-without acting on the notification. If you dismiss it, it reappears the next time the
-workspace asks for a set of commands you haven't approved.
+without acting on the notification. The notification itself is raised once per distinct set of
+unapproved commands per session, so that a regeneration on every file change does not spam it —
+if you dismiss it, use **Manage Alias Regeneration Commands** rather than waiting for it to
+return.
 
 ## Commands
 
@@ -382,6 +389,7 @@ RequireOnRails provides the following commands accessible via Command Palette (`
 * **Download Luau Module**: Download the RequireOnRails Luau module via Wally package manager or as a raw Luau file
 * **Add Import require def to all Luau files**: Automatically add import require definitions to all files that need them
 * **Regenerate Aliases (Debug)**: Force regeneration of all aliases (useful for troubleshooting)
+* **Manage Alias Regeneration Commands**: Review the `onAliasesRegenerated` commands this workspace requests, and approve or revoke each one for this workspace
 
 </details>
 

@@ -330,6 +330,32 @@ function announceWorkspaceCommands(pending) {
     });
 }
 
+// Backs the "Manage Alias Regeneration Commands" palette entry. The notification announces
+// itself once per session, so without a way in from the palette a dismissed prompt is
+// unreachable until the window reloads, and an approval can never be withdrawn.
+function getAliasCommandApprovalState() {
+    const config = vscode.workspace.getConfiguration(extenionName);
+    const { userCommands, workspaceCommands } = getAliasCommands(config);
+    return {
+        userCommands,
+        workspaceCommands,
+        approved: getApprovedCommands(),
+        canApprove: getWorkspaceState() !== null
+    };
+}
+
+// Replaces the approved set outright, unlike approveCommandsForWorkspace, which merges. The
+// picker shows every workspace command with its current state, so what comes back is the whole
+// answer, and deselecting is how a command is revoked. Clearing the announcement cache lets a
+// revoked command warn again on the next regeneration instead of staying silently ignored.
+function setApprovedCommands(commands) {
+    const state = getWorkspaceState();
+    if (!state) return Promise.reject(new Error('No workspace state available to store the approval'));
+
+    _announcedWorkspaceCommands.clear();
+    return Promise.resolve(state.update(APPROVED_COMMANDS_KEY, toCommandList(commands)));
+}
+
 // Ambiguity is re-detected on every regeneration, which fires on every file change, so the
 // notification is tied to *what* is ambiguous rather than to each run. Storing the last
 // announced set (instead of every set ever seen) means clearing an ambiguity and reintroducing
@@ -558,6 +584,8 @@ module.exports = {
     generateFileAliases,
     setExtensionContext,
     resetAmbiguityNotificationState,
+    getAliasCommandApprovalState,
+    setApprovedCommands,
     // Exported so aliasDiagnostics can prune the same directories with the same semantics,
     // rather than growing a third copy of this matching logic.
     compileIgnorePatterns,

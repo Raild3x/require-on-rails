@@ -39,6 +39,10 @@
         "title": "Regenerate Aliases (Debug)"
       },
       {
+        "command": "require-on-rails.manageAliasCommands",
+        "title": "Manage Alias Regeneration Commands"
+      },
+      {
         "command": "require-on-rails.checkForUpdates",
         "title": "Check for RequireOnRails Package Updates"
       }

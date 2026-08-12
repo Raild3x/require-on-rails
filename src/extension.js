@@ -1,6 +1,12 @@
 const vscode = require('vscode');
 const path = require('path');
-const { generateFileAliases, setExtensionContext, resetAmbiguityNotificationState } = require('./features/updateLuaFileAliases');
+const {
+    generateFileAliases,
+    setExtensionContext,
+    resetAmbiguityNotificationState,
+    getAliasCommandApprovalState,
+    setApprovedCommands
+} = require('./features/updateLuaFileAliases');
 const {
     refreshAliasDiagnostics,
     setAmbiguousAliases,
@@ -328,6 +334,59 @@ function activate(context) {
         // ambiguity warning has already been dismissed this session.
         resetAmbiguityNotificationState();
         regenerateAliasesAndDiagnostics();
+    });
+
+    // The approval notification only announces itself once per session, so this is the way back
+    // to the decision after it has been dismissed or missed, and the only way to revoke one.
+    // No modal confirmation here: invoking this command *is* the deliberate act, and the picker
+    // already shows each command verbatim.
+    registerCommand(context, 'require-on-rails.manageAliasCommands', async () => {
+        const { userCommands, workspaceCommands, approved, canApprove } = getAliasCommandApprovalState();
+
+        if (workspaceCommands.length === 0) {
+            vscode.window.showInformationMessage(
+                'RequireOnRails: this workspace does not request any onAliasesRegenerated commands.' +
+                (userCommands.length > 0
+                    ? ` Your User settings supply ${userCommands.length}, which run in every workspace and need no approval.`
+                    : '')
+            );
+            return;
+        }
+
+        if (!canApprove) {
+            vscode.window.showErrorMessage('RequireOnRails: no workspace storage is available, so approvals cannot be saved right now.');
+            return;
+        }
+
+        const picks = await vscode.window.showQuickPick(
+            workspaceCommands.map(command => ({
+                label: command,
+                picked: approved.includes(command),
+                description: userCommands.includes(command) ? 'also in your User settings' : undefined
+            })),
+            {
+                canPickMany: true,
+                title: 'Commands this workspace runs after aliases regenerate',
+                placeHolder: 'Checked commands run from the workspace root with your permissions. Unchecked commands are ignored.'
+            }
+        );
+
+        // Escaping leaves the current approvals alone; an empty selection is a real answer.
+        if (!picks) return;
+
+        try {
+            await setApprovedCommands(picks.map(pick => pick.label));
+        } catch (e) {
+            error('Failed to store onAliasesRegenerated approval:', e);
+            vscode.window.showErrorMessage('RequireOnRails: could not store the approval. See the RequireOnRails output for details.');
+            return;
+        }
+
+        vscode.window.showInformationMessage(
+            picks.length === 0
+                ? 'RequireOnRails: no workspace commands are approved. None will run.'
+                : `RequireOnRails: approved ${picks.length} command(s) for this workspace. They run on the next alias regeneration.`
+        );
     });
 
     registerCommand(context, 'require-on-rails.checkForUpdates', async () => {
