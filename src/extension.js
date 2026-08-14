@@ -23,6 +23,7 @@ const { checkForPackageUpdatesWithSkip, checkForPackageUpdates } = require('./fe
 
 let isActive = false;
 let statusBarItem;
+let toggleStatusBarItem;
 let outputChannel;
 
 //----------------------------------------------------------------------------------------------
@@ -170,8 +171,12 @@ function disableExtensionFeatures() {
 
 function setStatusBarText() {
     if (statusBarItem) {
-        statusBarItem.text = isActive ? '$(check) RequireOnRails: On' : '$(circle-slash) RequireOnRails: Off';
-        statusBarItem.tooltip = isActive ? 'Click to deactivate RequireOnRails' : 'Click to activate RequireOnRails';
+        statusBarItem.text = isActive ? '$(check) RequireOnRails' : '$(circle-slash) RequireOnRails';
+        statusBarItem.tooltip = 'Open RequireOnRails menu';
+    }
+    if (toggleStatusBarItem) {
+        toggleStatusBarItem.text = isActive ? '$(debug-stop)' : '$(play)';
+        toggleStatusBarItem.tooltip = isActive ? 'Deactivate RequireOnRails' : 'Activate RequireOnRails';
     }
 }
 
@@ -298,14 +303,36 @@ function activate(context) {
         }, 2000);
     }
 
-    // Status bar button
+    // Status bar: name opens the menu, adjacent icon button toggles (Rojo-style pair)
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-    statusBarItem.command = 'require-on-rails.toggleActive';
+    statusBarItem.command = 'require-on-rails.openMenu';
+    toggleStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 99);
+    toggleStatusBarItem.command = 'require-on-rails.toggleActive';
     setStatusBarText();
     statusBarItem.show();
-    context.subscriptions.push(statusBarItem);
+    toggleStatusBarItem.show();
+    context.subscriptions.push(statusBarItem, toggleStatusBarItem);
 
     // Register commands using helper function
+    registerCommand(context, 'require-on-rails.openMenu', async () => {
+        const items = [
+            isActive
+                ? { label: '$(circle-slash) Deactivate', description: 'Turn off RequireOnRails features', command: 'require-on-rails.toggleActive' }
+                : { label: '$(play) Activate', description: 'Turn on RequireOnRails features', command: 'require-on-rails.toggleActive' },
+            { label: '$(sync) Regenerate Aliases', description: 'Force alias regeneration and show the log', command: 'require-on-rails.regenerateAliases' },
+            { label: '$(cloud-download) Download Luau Module', description: 'Get the RequireOnRails Luau module', command: 'require-on-rails.downloadLuauModule' },
+            { label: '$(new-folder) Setup Default Project Structure', description: 'Unpack the starter project template', command: 'require-on-rails.setupDefaultProject' },
+            { label: '$(edit) Add Import Definition to All Files', description: 'Insert the import require def where missing', command: 'require-on-rails.addImportToAllFiles' },
+            { label: '$(terminal) Manage Alias Regeneration Commands', description: 'Approve or revoke workspace onAliasesRegenerated commands', command: 'require-on-rails.manageAliasCommands' },
+            { label: '$(gear) Open Extension Settings', description: 'Open RequireOnRails settings', command: 'workbench.action.openSettings', args: 'require-on-rails' },
+            { label: '$(arrow-up) Check for Updates', description: 'Check for RequireOnRails package updates', command: 'require-on-rails.checkForUpdates' },
+        ];
+        const pick = await vscode.window.showQuickPick(items, { placeHolder: 'RequireOnRails' });
+        if (pick) {
+            vscode.commands.executeCommand(pick.command, pick.args);
+        }
+    });
+
     registerCommand(context, 'require-on-rails.toggleActive', () => {
         if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
             vscode.window.showWarningMessage('RequireOnRails: Please open a folder first.');

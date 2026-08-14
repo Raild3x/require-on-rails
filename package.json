@@ -19,32 +19,44 @@
   "contributes": {
     "commands": [
       {
+        "command": "require-on-rails.openMenu",
+        "title": "Open Menu",
+        "category": "RequireOnRails"
+      },
+      {
         "command": "require-on-rails.toggleActive",
-        "title": "Toggle RoR Active"
+        "title": "Toggle Active",
+        "category": "RequireOnRails"
       },
       {
         "command": "require-on-rails.setupDefaultProject",
-        "title": "Setup Default Project Structure"
+        "title": "Setup Default Project Structure",
+        "category": "RequireOnRails"
       },
       {
         "command": "require-on-rails.downloadLuauModule",
-        "title": "Download Luau Module"
+        "title": "Download Luau Module",
+        "category": "RequireOnRails"
       },
       {
         "command": "require-on-rails.addImportToAllFiles",
-        "title": "Add Import require def to all Luau files."
+        "title": "Add Import Definition to All Files",
+        "category": "RequireOnRails"
       },
       {
         "command": "require-on-rails.regenerateAliases",
-        "title": "Regenerate Aliases (Debug)"
+        "title": "Regenerate Aliases",
+        "category": "RequireOnRails"
       },
       {
         "command": "require-on-rails.manageAliasCommands",
-        "title": "Manage Alias Regeneration Commands"
+        "title": "Manage Alias Regeneration Commands",
+        "category": "RequireOnRails"
       },
       {
         "command": "require-on-rails.checkForUpdates",
-        "title": "Check for RequireOnRails Package Updates"
+        "title": "Check for Updates",
+        "category": "RequireOnRails"
       }
     ],
     "configuration": {

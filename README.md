@@ -87,7 +87,7 @@ If your project structure does not follow this exactly then you can configure th
 ### Option 1: Use Template
 1. Open a fresh workspace in VS Code
 2. Open Command Palette (`Ctrl+Shift+P`)
-3. Run `Setup Default Project Structure`
+3. Run `RequireOnRails: Setup Default Project Structure`
 4. Activate RequireOnRails using the status bar button
 5. Start coding with `require("@ModuleName")` syntax!
 
@@ -384,12 +384,16 @@ return.
 
 RequireOnRails provides the following commands accessible via Command Palette (`Ctrl+Shift+P`):
 
-* **Toggle RoR Active**: Enable or disable RequireOnRails functionality
+All commands are prefixed with `RequireOnRails:` in the palette:
+
+* **Open Menu**: A quick-pick menu of every RequireOnRails action (also opened by clicking the status bar name)
+* **Toggle Active**: Enable or disable RequireOnRails functionality
 * **Setup Default Project Structure**: Setup a project structure ready out of the box for RequireOnRails
 * **Download Luau Module**: Download the RequireOnRails Luau module via Wally package manager or as a raw Luau file
-* **Add Import require def to all Luau files**: Automatically add import require definitions to all files that need them
-* **Regenerate Aliases (Debug)**: Force regeneration of all aliases (useful for troubleshooting)
+* **Add Import Definition to All Files**: Automatically add import require definitions to all files that need them
+* **Regenerate Aliases**: Force regeneration of all aliases (useful for troubleshooting)
 * **Manage Alias Regeneration Commands**: Review the `onAliasesRegenerated` commands this workspace requests, and approve or revoke each one for this workspace
+* **Check for Updates**: Check whether a newer RequireOnRails Luau package is available
 
 </details>
 
@@ -409,7 +413,7 @@ Turn the log level up and RequireOnRails will explain every decision it makes:
 
 1. Open the **Output** panel (`Ctrl+Shift+U`) and pick **RequireOnRails** from the dropdown
 2. Click the gear icon on that panel and choose **Debug** (or run **Developer: Set Log Level...** from the Command Palette)
-3. Run **RequireOnRails: Regenerate Aliases (Debug)**
+3. Run **RequireOnRails: Regenerate Aliases**
 
 The log then shows which directories were scanned versus pruned (and which
 `ignoreDirectories` pattern pruned them), every file added or skipped with the
