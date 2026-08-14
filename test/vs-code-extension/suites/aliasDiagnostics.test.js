@@ -91,9 +91,12 @@ suite('Alias Diagnostics Tests', () => {
                 'Commented lines should not produce diagnostics');
         });
 
-        test('Should ignore the reserved @self alias', () => {
-            const found = findUnresolvedAliases('local X = require("@self/Sibling")', known);
-            assert.strictEqual(found.length, 0, '@self is resolved by Luau, not by .luaurc');
+        test('Should ignore the reserved @self and @game aliases', () => {
+            const found = findUnresolvedAliases(
+                'local X = require("@self/Sibling") local Y = require("@game/ReplicatedStorage/Thing")',
+                known
+            );
+            assert.strictEqual(found.length, 0, '@self and @game are resolved by Luau, not by .luaurc');
         });
 
         test('Should handle single quotes and multiple requires on one line', () => {

@@ -10,8 +10,8 @@ const supportedExtensions = ['.lua', '.luau'];
 // requires; RequireOnRails passes anything else through to Roblox's own require.
 const ALIAS_REQUIRE = /require\s*\(\s*(['"])(@[^'"]*)\1\s*\)/g;
 
-// Luau's own reserved alias for "relative to this file", never present in .luaurc.
-const RESERVED_ALIASES = new Set(['self']);
+// Luau's own built-in aliases ("relative to this file" / the DataModel root), never present in .luaurc.
+const RESERVED_ALIASES = new Set(['self', 'game']);
 
 // A single collection, so re-running replaces the previous results instead of stacking them.
 let _collection = null;
