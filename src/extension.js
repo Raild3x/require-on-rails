@@ -298,9 +298,17 @@ function validateContextualImportTemplate(template, showWarning = true) {
 }
 
 function activate(context) {
+    // Start from a known-inactive state with nothing left registered. VS Code activates an
+    // extension once per host, so in production this is a no-op — but activate() must not
+    // inherit state, or a second activation reads isActive as true and the startsImmediately
+    // toggle below turns the extension *off* instead of on.
+    isActive = false;
+    disableWatchers();
+    disableEventListeners();
+
     const config = vscode.workspace.getConfiguration('require-on-rails');
     const contextualImportTemplate = config.get('contextualImportTemplate', '');
-    
+
     // Create output channel for logging. `{ log: true }` makes this a LogOutputChannel, so
     // verbosity is controlled by the user via the Output panel's gear icon (or the
     // "Developer: Set Log Level..." command) rather than an extension setting.

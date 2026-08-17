@@ -238,13 +238,16 @@ suite('VSIX Extension Integration Tests', () => {
         test('Should handle status bar updates in VSIX environment', () => {
             const { activate } = require('../../../src/extension');
             
-            let statusBarItem = null;
+            // The status bar is a pair: the name (which opens the menu) and an adjacent
+            // icon-only toggle button. Every created item is collected, because asserting on
+            // whichever was made last would be asserting on the toggle button.
+            const statusBarItems = [];
             const originalCreateStatusBarItem = vscode.window.createStatusBarItem;
-            
+
             // Mock createStatusBarItem with proper VSCode StatusBarItem interface
             Object.defineProperty(vscode.window, 'createStatusBarItem', {
                 value: (alignment, priority) => {
-                    statusBarItem = {
+                    const statusBarItem = {
                         id: 'test-status-bar',
                         alignment: alignment || vscode.StatusBarAlignment.Left,
                         priority: priority || 0,
@@ -259,6 +262,7 @@ suite('VSIX Extension Integration Tests', () => {
                         hide: () => {},
                         dispose: () => {}
                     };
+                    statusBarItems.push(statusBarItem);
                     return statusBarItem;
                 },
                 writable: true,
@@ -284,9 +288,12 @@ suite('VSIX Extension Integration Tests', () => {
                 // Actually activate the extension to trigger status bar creation
                 activate(mockVSIXContext);
                 
-                assert.ok(statusBarItem, 'Should create status bar item in VSIX environment');
-                // @ts-ignore
-                assert.ok(statusBarItem.text.includes('RequireOnRails'), 'Status bar should show extension name');
+                assert.ok(statusBarItems.length >= 2,
+                    'Should create the name and toggle status bar items in VSIX environment');
+                assert.ok(statusBarItems.some(item => item.text.includes('RequireOnRails')),
+                    'One status bar item should show the extension name');
+                assert.ok(statusBarItems.some(item => item.command === 'require-on-rails.toggleActive'),
+                    'One status bar item should toggle the extension');
 
             } finally {
                 Object.defineProperty(vscode.window, 'createStatusBarItem', {

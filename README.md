@@ -1,8 +1,6 @@
 # RequireOnRails
 
 [![CI](https://github.com/Raild3x/require-on-rails/actions/workflows/ci.yml/badge.svg)](https://github.com/Raild3x/require-on-rails/actions/workflows/ci.yml)
-[![Visual Studio Marketplace](https://img.shields.io/visual-studio-marketplace/v/raildex.require-on-rails?label=marketplace&color=0066b8)](https://marketplace.visualstudio.com/items?itemName=raildex.require-on-rails)
-[![Installs](https://img.shields.io/visual-studio-marketplace/i/raildex.require-on-rails?color=0066b8)](https://marketplace.visualstudio.com/items?itemName=raildex.require-on-rails)
 [![Wally](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.wally.run%2Fv1%2Fpackage-metadata%2Fraild3x%2Frequireonrails&query=%24.versions%5B0%5D.package.version&label=wally&color=cc3232)](https://wally.run/package/raild3x/requireonrails)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
 
