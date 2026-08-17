@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  action:
+    name: Require checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The two `uses: ./` steps run before any npm install on purpose: if the action ever
+      # grows a dependency, they break here rather than in a user's workflow.
+      - name: Check ProjectTemplate (expected clean)
+        uses: ./
+        with:
+          working-directory: ProjectTemplate
+
+      - name: Check the broken fixture (warn-only, so the step passes)
+        uses: ./
+        with:
+          working-directory: test/ci-fixture
+          warn-only: 'true'
+
+      - name: Assert the fixture's problems are actually reported
+        run: |
+          set -euo pipefail
+          node src/cli/check.js --working-directory test/ci-fixture --warn-only | tee findings.txt
+          grep -q 'alias "myModule" is ambiguous' findings.txt
+          grep -q 'alias "Nope" is not defined' findings.txt
+          grep -q '3 finding(s)' findings.txt
+
+          node src/cli/check.js --working-directory test/ci-fixture-explicit --warn-only | tee explicit.txt
+          grep -q 'no module found at "src/Shared/Ghost"' explicit.txt
+          grep -q '2 finding(s)' explicit.txt
+
+          if node src/cli/check.js --working-directory test/ci-fixture > /dev/null; then
+            echo 'FAIL: the checker exited 0 on a project with findings'
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm run test:cli

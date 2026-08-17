@@ -1,10 +1,16 @@
 # RequireOnRails
 
+[![CI](https://github.com/Raild3x/require-on-rails/actions/workflows/ci.yml/badge.svg)](https://github.com/Raild3x/require-on-rails/actions/workflows/ci.yml)
+[![Visual Studio Marketplace](https://img.shields.io/visual-studio-marketplace/v/raildex.require-on-rails?label=marketplace&color=0066b8)](https://marketplace.visualstudio.com/items?itemName=raildex.require-on-rails)
+[![Installs](https://img.shields.io/visual-studio-marketplace/i/raildex.require-on-rails?color=0066b8)](https://marketplace.visualstudio.com/items?itemName=raildex.require-on-rails)
+[![Wally](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.wally.run%2Fv1%2Fpackage-metadata%2Fraild3x%2Frequireonrails&query=%24.versions%5B0%5D.package.version&label=wally&color=cc3232)](https://wally.run/package/raild3x/requireonrails)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
+
 An opinionated Roblox Luau utility extension that simplifies working with complex codebase hierarchies. It manages your require paths in one of two ways: by **generating `.luaurc` aliases** so modules can be required by basename and resolved at runtime, or by **writing full, statically-resolvable paths** into your source as you type.
 
 RequireOnRails does *not* prevent you from utilizing any default require behaviors. If a path is not one it manages, it falls back to the default Roblox require behavior.
 
-**[Choosing a Mode](#choosing-a-mode)** · **[Features](#features)** · **[Requirements](#requirements)** · **[Setup and Usage](#setup-and-usage)** · **[Settings and Commands](#extension-settings-and-commands)** · **[Troubleshooting](#troubleshooting)**
+**[Choosing a Mode](#choosing-a-mode)** · **[Features](#features)** · **[Requirements](#requirements)** · **[Setup and Usage](#setup-and-usage)** · **[Settings and Commands](#extension-settings-and-commands)** · **[CI](#continuous-integration)** · **[Troubleshooting](#troubleshooting)**
 
 ## Choosing a Mode
 
@@ -537,6 +543,66 @@ All commands are prefixed with `RequireOnRails:` in the palette. The menu hides 
 * **Manage Alias Regeneration Commands** *(dynamic only)*: Review the `onAliasesRegenerated` commands this workspace requests, and approve or revoke each one for this workspace
 * **Rewrite All Requires to Current Style** *(explicit only)*: Re-render every resolvable require string to the current path style (also the migration path when switching from dynamic mode)
 * **Check for Updates**: Check whether a newer RequireOnRails Luau package is available
+
+</details>
+
+## Continuous Integration
+
+<details>
+<summary>Catching broken requires on pull requests</summary>
+
+The extension only reports problems while it is open in your editor, so a teammate who moves
+files with git or the file explorer can merge requires that no longer resolve. The
+**RequireOnRails Check** action runs the same checks on a checkout and annotates the pull
+request diff.
+
+Add `.github/workflows/require-on-rails.yml` to your project:
+
+```yaml
+name: RequireOnRails
+
+on: [push, pull_request]
+
+jobs:
+  requires:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Raild3x/require-on-rails@v2
+        # with:
+        #   working-directory: .        # project root, for monorepos
+        #   warn-only: 'true'           # annotate without failing the build
+```
+
+Nothing else is needed: no Node setup, no `npm install`, no configuration. The action reads
+your committed `.vscode/settings.json` and falls back to the extension's defaults for anything
+you have not set, so CI and your editor agree about what counts as a problem.
+
+**What it reports**
+
+| Check | Mode | Reported when |
+| --- | --- | --- |
+| Ambiguous aliases | Dynamic | Two or more scanned files share a basename and `pathPriority` picks no winner, so no alias exists and every `require("@Name")` of it fails |
+| Unresolved requires | Both | Dynamic: the alias root is not in the generated alias set. Explicit: the require string resolves to no real file |
+| `.luaurc` drift | Dynamic | A **committed** `.luaurc` no longer matches what regeneration would produce — someone moved files without the extension running |
+
+Aliases are always derived from your file tree and settings, never read from `.luaurc`. Dynamic
+mode projects commonly gitignore `.luaurc` because it changes on every file move; if it is not
+committed, the drift check is simply skipped and everything else still works.
+
+**Inputs**
+
+| Input | Default | Description |
+| --- | --- | --- |
+| `working-directory` | `.` | Project root containing `.vscode/settings.json`, relative to the repository root |
+| `warn-only` | `'false'` | Annotate findings but always exit successfully — useful while cleaning up an existing project |
+
+Findings fail the job by default. A project that cannot be made clean immediately can start with
+`warn-only: 'true'` and drop it once the annotations are gone. Problems with the run itself — an
+unparseable `settings.json` or `.luaurc` — always fail, since a checker that cannot read its
+configuration has not checked anything.
+
+Pin `@v2` to receive fixes automatically, or a full version such as `@v2.3.0` to freeze.
 
 </details>
 

@@ -237,6 +237,7 @@
     "test": "node ./test/vs-code-extension/runners/runTest.js",
     "playground:reset": "node scripts/reset-playground.js",
     "test:fast": "node ./test/vs-code-extension/runners/runFastTest.js",
+    "test:cli": "mocha --ui tdd \"test/cli/**/*.test.js\"",
     "pretest": "npm run compile",
     "compile": "echo TS conversion disabled",
     "vscode:prepublish": "npm run compile",

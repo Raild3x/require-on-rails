@@ -1,0 +1,23 @@
+name: 'RequireOnRails Check'
+description: 'Reports ambiguous aliases, requires that do not resolve, and committed .luaurc drift in a Roblox Luau project.'
+author: 'Raild3x'
+
+branding:
+  icon: 'git-branch'
+  color: 'red'
+
+inputs:
+  working-directory:
+    description: 'Project root containing .vscode/settings.json, relative to the repository root.'
+    required: false
+    default: '.'
+  warn-only:
+    description: 'Report findings as annotations but always exit successfully.'
+    required: false
+    default: 'false'
+
+# Plain Node, no dependencies to install and nothing to build: the runner checks this
+# repository out and runs the file directly.
+runs:
+  using: 'node20'
+  main: 'src/cli/check.js'

@@ -1,0 +1,7 @@
+{
+    // Explicit-mode counterpart to ../ci-fixture. Also deliberately broken; do not "fix" it.
+    // Duplicate basenames are legal here, so this fixture only exercises resolution.
+    "require-on-rails.mode": "explicit",
+    "require-on-rails.directoriesToScan": ["src"],
+    "require-on-rails.manualAliases": {}
+}

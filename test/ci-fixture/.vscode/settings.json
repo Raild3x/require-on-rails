@@ -1,0 +1,12 @@
+{
+    // A deliberately broken project, used by this repository's own CI to prove the checker
+    // still reports what it is supposed to report. Do not "fix" the problems below.
+    //
+    // The comments and the trailing comma are also the test of the JSONC parser.
+    "require-on-rails.directoriesToScan": ["src"],
+
+    /* manualAliases must be cleared: the manifest default declares Server/Client/Shared,
+       which do not exist here. */
+    "require-on-rails.manualAliases": {},
+    "require-on-rails.pathPriority": [],
+}
