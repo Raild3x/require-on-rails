@@ -1,7 +1,11 @@
 const fs = require('fs');
 const path = require('path');
 const { exec } = require('child_process');
-const vscode = require('vscode');
+// Optional: this module's scanning and classification logic is also used by the CI checker,
+// which runs in plain Node where the vscode module does not exist. Only the editor-facing
+// functions below dereference it.
+let vscode = null;
+try { vscode = require('vscode'); } catch (e) { /* running outside VS Code */ }
 const { print, warn, error, debug, trace, showOutputChannel } = require('../core/logger');
 
 const extenionName = 'require-on-rails';
@@ -405,10 +409,10 @@ function announceAmbiguousAliases(ambiguousAliases) {
 // the single source of module-index semantics (folder-init aliasing, .server/.client skip,
 // ignoreDirectories pruning): dynamic mode turns it into .luaurc aliases, explicit mode's
 // pathResolver turns it into the completion/rewrite index. Resets the per-run stats counters.
-function buildBasenameMap(workspaceRoot) {
-    const config = vscode.workspace.getConfiguration(extenionName);
-    const directoriesToScan = config.get('directoriesToScan') || [];
-    const ignoreDirectories = config.get('ignoreDirectories') || [];
+//
+// Settings arrive as plain values rather than being read from VS Code here, so the CI
+// checker can supply them from a parsed settings.json.
+function buildBasenameMap(workspaceRoot, { directoriesToScan = [], ignoreDirectories = [] } = {}) {
     const ignoreList = ['.server', '.client'];
 
     stats = { dirsScanned: 0, dirsPruned: 0, filesSeen: 0, filesAdded: 0, filesRejected: 0 };
@@ -447,51 +451,16 @@ function buildBasenameMap(workspaceRoot) {
     return { basenameMap, rootDirs };
 }
 
-// Main function to generate file aliases
-function generateFileAliases() {
-    const config = vscode.workspace.getConfiguration(extenionName);
-
-    // Check if workspace folders exist
-    if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
-        print('No workspace folder found. Skipping alias generation.');
-        return;
-    }
-
-    const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
-
-    const rawPathPriority = config.get('pathPriority', []);
-    const pathPriority = Array.isArray(rawPathPriority) ? rawPathPriority : [];
-    const inspectedManualAliases = config.inspect('manualAliases');
-    const manualAliases = (inspectedManualAliases
-        ? (inspectedManualAliases.workspaceFolderValue
-            ?? inspectedManualAliases.workspaceValue
-            ?? inspectedManualAliases.globalValue
-            ?? inspectedManualAliases.defaultValue)
-        : null) ?? {};
-    const luaurcPath = getDirPath(workspaceRoot, '.luaurc');
-
-    debug(`--- Alias generation started ---`);
-    debug(`workspaceRoot: ${workspaceRoot}`);
-    debug(`pathPriority: ${JSON.stringify(pathPriority)}`);
-    debug(`manualAliases: ${JSON.stringify(manualAliases)}`);
-
-    // Read and update the .luaurc file with generated aliases
-    let luaurc = {};
-    if (fs.existsSync(luaurcPath)) {
-        const rawData = fs.readFileSync(luaurcPath, 'utf8');
-        try {
-            luaurc = rawData ? JSON.parse(rawData) : {};
-        } catch (e) {
-            error("Failed to parse .luaurc as JSON:", e);
-            vscode.window.showErrorMessage("RequireOnRails: Failed to parse .luaurc as JSON. Please fix or delete the file.");
-            return
-        }
-    }
-
-    const { basenameMap, rootDirs } = buildBasenameMap(workspaceRoot);
-
+// Turns the basename map into the alias set RequireOnRails would write: unique basenames
+// become aliases, ambiguous ones are dropped (unless pathPriority breaks the tie), and
+// manualAliases win over both. Ambiguous names are returned with their conflicting paths so
+// callers can explain the omission.
+//
+// Pure, so that dynamic mode's .luaurc write and the CI checker's read-only report derive the
+// same "generated alias set" from the same rules.
+function classifyBasenames(basenameMap, { pathPriority = [], manualAliases = {} } = {}) {
     // Merge manual and auto-generated aliases, manual takes precedence
-    let compiledAliases = {};
+    const compiledAliases = {};
 
     // Add manual aliases from VS Code settings (these take precedence)
     for (const [k, v] of Object.entries(manualAliases)) {
@@ -540,6 +509,58 @@ function generateFileAliases() {
             debug(`Alias "${key}" -> "${value}" was discarded: require-on-rails.manualAliases already maps "${key}" to "${manualAliases[key]}".`);
         }
     }
+
+    return { aliases: compiledAliases, ambiguousAliases, shadowedByManual };
+}
+
+// Main function to generate file aliases
+function generateFileAliases() {
+    const config = vscode.workspace.getConfiguration(extenionName);
+
+    // Check if workspace folders exist
+    if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
+        print('No workspace folder found. Skipping alias generation.');
+        return;
+    }
+
+    const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
+
+    const rawPathPriority = config.get('pathPriority', []);
+    const pathPriority = Array.isArray(rawPathPriority) ? rawPathPriority : [];
+    const inspectedManualAliases = config.inspect('manualAliases');
+    const manualAliases = (inspectedManualAliases
+        ? (inspectedManualAliases.workspaceFolderValue
+            ?? inspectedManualAliases.workspaceValue
+            ?? inspectedManualAliases.globalValue
+            ?? inspectedManualAliases.defaultValue)
+        : null) ?? {};
+    const luaurcPath = getDirPath(workspaceRoot, '.luaurc');
+
+    debug(`--- Alias generation started ---`);
+    debug(`workspaceRoot: ${workspaceRoot}`);
+    debug(`pathPriority: ${JSON.stringify(pathPriority)}`);
+    debug(`manualAliases: ${JSON.stringify(manualAliases)}`);
+
+    // Read and update the .luaurc file with generated aliases
+    let luaurc = {};
+    if (fs.existsSync(luaurcPath)) {
+        const rawData = fs.readFileSync(luaurcPath, 'utf8');
+        try {
+            luaurc = rawData ? JSON.parse(rawData) : {};
+        } catch (e) {
+            error("Failed to parse .luaurc as JSON:", e);
+            vscode.window.showErrorMessage("RequireOnRails: Failed to parse .luaurc as JSON. Please fix or delete the file.");
+            return
+        }
+    }
+
+    const { basenameMap, rootDirs } = buildBasenameMap(workspaceRoot, {
+        directoriesToScan: config.get('directoriesToScan') || [],
+        ignoreDirectories: config.get('ignoreDirectories') || []
+    });
+
+    const { aliases: compiledAliases, ambiguousAliases, shadowedByManual } =
+        classifyBasenames(basenameMap, { pathPriority, manualAliases });
 
     trace(`Final aliases: ${JSON.stringify(compiledAliases, null, 2)}`);
     // Note: candidates != files seen - files skipped, because a directory's init file
@@ -596,6 +617,7 @@ function generateFileAliases() {
 module.exports = {
     generateFileAliases,
     buildBasenameMap,
+    classifyBasenames,
     setExtensionContext,
     resetAmbiguityNotificationState,
     getAliasCommandApprovalState,

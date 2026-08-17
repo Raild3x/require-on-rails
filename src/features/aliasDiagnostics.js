@@ -1,6 +1,9 @@
 const fs = require('fs');
 const path = require('path');
-const vscode = require('vscode');
+// Optional — see updateLuaFileAliases.js. The finding and message functions are pure; only
+// the Diagnostic-building and collection functions touch the editor.
+let vscode = null;
+try { vscode = require('vscode'); } catch (e) { /* running outside VS Code */ }
 const { debug, warn } = require('../core/logger');
 
 const { getMode, getExplicitPathStyle, runtimeModuleRequired } = require('../utils/workspaceUtils');
@@ -94,14 +97,23 @@ function findUnresolvedAliases(text, aliasNames) {
     return found;
 }
 
+// Explains one unresolved alias, distinguishing "dropped because ambiguous" from "no such
+// module". Pure, so the CI checker reports these in exactly the words the editor uses.
+function unresolvedAliasMessage(unresolved, ambiguousAliases) {
+    const ambiguousPaths = ambiguousAliases[unresolved.aliasName];
+    return {
+        code: ambiguousPaths ? 'ambiguous-alias' : 'unknown-alias',
+        message: ambiguousPaths
+            ? `RequireOnRails: "${unresolved.aliasPath}" has no alias because "${unresolved.aliasName}" is ambiguous — ` +
+              `${ambiguousPaths.length} files share that name (${ambiguousPaths.join(', ')}). ` +
+              `Rename one, or add a require-on-rails.pathPriority prefix to pick a winner.`
+            : `RequireOnRails: alias "${unresolved.aliasName}" is not defined in .luaurc. ` +
+              `Check the file exists under require-on-rails.directoriesToScan and is not excluded by ignoreDirectories.`
+    };
+}
+
 function buildDiagnostic(unresolved) {
-    const ambiguousPaths = _ambiguousAliases[unresolved.aliasName];
-    const message = ambiguousPaths
-        ? `RequireOnRails: "${unresolved.aliasPath}" has no alias because "${unresolved.aliasName}" is ambiguous — ` +
-          `${ambiguousPaths.length} files share that name (${ambiguousPaths.join(', ')}). ` +
-          `Rename one, or add a require-on-rails.pathPriority prefix to pick a winner.`
-        : `RequireOnRails: alias "${unresolved.aliasName}" is not defined in .luaurc. ` +
-          `Check the file exists under require-on-rails.directoriesToScan and is not excluded by ignoreDirectories.`;
+    const { message, code } = unresolvedAliasMessage(unresolved, _ambiguousAliases);
 
     const diagnostic = new vscode.Diagnostic(
         new vscode.Range(
@@ -112,7 +124,7 @@ function buildDiagnostic(unresolved) {
         vscode.DiagnosticSeverity.Warning
     );
     diagnostic.source = 'RequireOnRails';
-    diagnostic.code = ambiguousPaths ? 'ambiguous-alias' : 'unknown-alias';
+    diagnostic.code = code;
     return diagnostic;
 }
 
@@ -138,10 +150,45 @@ function refreshDynamicDiagnostics(workspaceRoot, config, collection) {
     return { totalUnresolved, filesWithIssues };
 }
 
-// Explicit mode: full-resolution validation — every require string must land on a real
-// module file (alias root lookup + path walk, ./ ../ resolution, @game via the Rojo
-// mapping). A bare "@name" matching a known module basename is skipped: auto-replace will
-// rewrite it, so flagging it would just flicker while the user types.
+// Finds every require string in one file that explicit mode cannot resolve to a real module
+// file (alias root lookup + path walk, ./ ../ resolution, @game via the Rojo mapping). A bare
+// "@name" matching a known module basename is skipped: auto-replace will rewrite it, so
+// flagging it would just flicker while the user types. 'unverifiable' resolutions stay silent.
+//
+// Pure, so the CI checker validates explicit-mode requires by the same rules and words.
+function findUnresolvedRequires(text, fromFileRel, ctx) {
+    const found = [];
+
+    for (const occurrence of pathResolver.findRequireStrings(text)) {
+        const spec = occurrence.spec;
+
+        // Bare short name that auto-replace will handle (or that names a real alias).
+        if (spec.startsWith('@') && !spec.includes('/')) {
+            const name = spec.slice(1);
+            if (pathResolver.RESERVED_ALIASES.has(name)) continue;
+            if (ctx.aliases[name] !== undefined) continue;
+            if (ctx.targets[name] && ctx.targets[name].length > 0) continue;
+            found.push({
+                ...occurrence,
+                message: `RequireOnRails: "${spec}" matches no known module or alias. ` +
+                    `Check the file exists under require-on-rails.directoriesToScan and is not excluded by ignoreDirectories.`
+            });
+            continue;
+        }
+
+        const resolution = pathResolver.resolveRequire(spec, fromFileRel, ctx);
+        if (resolution.status === 'unresolved') {
+            found.push({
+                ...occurrence,
+                message: `RequireOnRails: "${spec}" does not resolve — ${resolution.message}.`
+            });
+        }
+    }
+
+    return found;
+}
+
+// Explicit mode: full-resolution validation of every require string in the workspace.
 function refreshExplicitDiagnostics(workspaceRoot, config, collection) {
     const ctx = pathResolver.getContext() || pathResolver.refreshContext();
     if (!ctx) return;
@@ -153,33 +200,11 @@ function refreshExplicitDiagnostics(workspaceRoot, config, collection) {
 
     for (const [filePath, text] of pathResolver.readSourceTexts(workspaceRoot, config)) {
         const fromRel = path.relative(workspaceRoot, filePath).replace(/\\/g, '/');
-        const diagnostics = [];
+        const unresolved = findUnresolvedRequires(text, fromRel, ctx);
+        if (unresolved.length === 0) continue;
 
-        for (const found of pathResolver.findRequireStrings(text)) {
-            const spec = found.spec;
-
-            // Bare short name that auto-replace will handle (or that names a real alias).
-            if (spec.startsWith('@') && !spec.includes('/')) {
-                const name = spec.slice(1);
-                if (pathResolver.RESERVED_ALIASES.has(name)) continue;
-                if (ctx.aliases[name] !== undefined) continue;
-                if (ctx.targets[name] && ctx.targets[name].length > 0) continue;
-                diagnostics.push(makeExplicitDiagnostic(found,
-                    `RequireOnRails: "${spec}" matches no known module or alias. ` +
-                    `Check the file exists under require-on-rails.directoriesToScan and is not excluded by ignoreDirectories.`));
-                continue;
-            }
-
-            const resolution = pathResolver.resolveRequire(spec, fromRel, ctx);
-            if (resolution.status === 'unresolved') {
-                diagnostics.push(makeExplicitDiagnostic(found,
-                    `RequireOnRails: "${spec}" does not resolve — ${resolution.message}.`));
-            }
-        }
-
-        if (diagnostics.length === 0) continue;
-        collection.set(vscode.Uri.file(filePath), diagnostics);
-        totalUnresolved += diagnostics.length;
+        collection.set(vscode.Uri.file(filePath), unresolved.map(u => makeExplicitDiagnostic(u, u.message)));
+        totalUnresolved += unresolved.length;
         filesWithIssues++;
     }
 
@@ -325,5 +350,9 @@ module.exports = {
     setAmbiguousAliases,
     clearAliasDiagnostics,
     disposeAliasDiagnostics,
-    findUnresolvedAliases
+    findUnresolvedAliases,
+    // Pure detection/reporting, shared with the CI checker so both speak the same words.
+    findUnresolvedRequires,
+    unresolvedAliasMessage,
+    readAliasNames
 };

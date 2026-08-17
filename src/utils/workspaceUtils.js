@@ -1,4 +1,7 @@
-const vscode = require('vscode');
+// Optional — see updateLuaFileAliases.js. Required here only so that aliasDiagnostics, which
+// imports this module at load time, can itself be imported outside VS Code.
+let vscode = null;
+try { vscode = require('vscode'); } catch (e) { /* running outside VS Code */ }
 const fs = require('fs');
 const path = require('path');
 const { warn } = require('../core/logger');

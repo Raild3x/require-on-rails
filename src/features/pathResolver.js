@@ -1,6 +1,9 @@
 const fs = require('fs');
 const path = require('path');
-const vscode = require('vscode');
+// Optional — see updateLuaFileAliases.js. Resolution and rendering are pure; only
+// refreshContext and the open-buffer preference in readSourceTexts touch the editor.
+let vscode = null;
+try { vscode = require('vscode'); } catch (e) { /* running outside VS Code */ }
 const { debug, warn } = require('../core/logger');
 const { buildBasenameMap, compileIgnorePatterns, findIgnoreMatch } = require('./updateLuaFileAliases');
 
@@ -152,9 +155,39 @@ function parseRojoProject(workspaceRoot, rojoProjectPath) {
     return map;
 }
 
-// Rebuilds the cached context. Reuses buildBasenameMap so the module index has exactly the
-// same semantics as dynamic mode's alias scan (folder-init collapse, .server/.client skip,
-// ignoreDirectories pruning).
+// Builds a resolution context from a workspace root and plain setting values. Reuses
+// buildBasenameMap so the module index has exactly the same semantics as dynamic mode's alias
+// scan (folder-init collapse, .server/.client skip, ignoreDirectories pruning).
+//
+// Separate from refreshContext so the CI checker, which has no VS Code to read settings from,
+// resolves requires exactly as the editor does.
+function createContext(workspaceRoot, {
+    directoriesToScan = [],
+    ignoreDirectories = [],
+    pathPriority = [],
+    rojoProjectPath = 'default.project.json'
+} = {}) {
+    const { basenameMap } = buildBasenameMap(workspaceRoot, { directoriesToScan, ignoreDirectories });
+    const targets = {};
+    const targetSet = new Set();
+    for (const [basename, arr] of Object.entries(basenameMap)) {
+        targets[basename] = arr.map(entry => entry.path);
+        arr.forEach(entry => targetSet.add(entry.path));
+    }
+
+    return {
+        workspaceRoot,
+        aliases: readAliasMap(workspaceRoot),
+        rojoMap: parseRojoProject(workspaceRoot, rojoProjectPath),
+        targets,
+        targetSet,
+        pathPriority: (Array.isArray(pathPriority) ? pathPriority : [])
+            .filter(entry => typeof entry === 'string' && entry.length > 0)
+            .map(entry => normalizeSlashes(entry))
+    };
+}
+
+// Rebuilds the cached context from the current workspace and settings.
 function refreshContext() {
     if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
         _ctx = null;
@@ -163,26 +196,13 @@ function refreshContext() {
     const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
     const config = vscode.workspace.getConfiguration('require-on-rails');
 
-    const { basenameMap } = buildBasenameMap(workspaceRoot);
-    const targets = {};
-    const targetSet = new Set();
-    for (const [basename, arr] of Object.entries(basenameMap)) {
-        targets[basename] = arr.map(entry => entry.path);
-        arr.forEach(entry => targetSet.add(entry.path));
-    }
-
-    const rawPathPriority = config.get('pathPriority', []);
-    _ctx = {
-        workspaceRoot,
-        aliases: readAliasMap(workspaceRoot),
-        rojoMap: parseRojoProject(workspaceRoot, config.get('rojoProjectPath', 'default.project.json')),
-        targets,
-        targetSet,
-        pathPriority: (Array.isArray(rawPathPriority) ? rawPathPriority : [])
-            .filter(entry => typeof entry === 'string' && entry.length > 0)
-            .map(entry => normalizeSlashes(entry))
-    };
-    debug(`pathResolver: context refreshed — ${targetSet.size} module(s), ${Object.keys(_ctx.aliases).length} alias root(s), rojo entries: ${_ctx.rojoMap ? _ctx.rojoMap.length : 'none'}`);
+    _ctx = createContext(workspaceRoot, {
+        directoriesToScan: config.get('directoriesToScan') || [],
+        ignoreDirectories: config.get('ignoreDirectories') || [],
+        pathPriority: config.get('pathPriority', []),
+        rojoProjectPath: config.get('rojoProjectPath', 'default.project.json')
+    });
+    debug(`pathResolver: context refreshed — ${_ctx.targetSet.size} module(s), ${Object.keys(_ctx.aliases).length} alias root(s), rojo entries: ${_ctx.rojoMap ? _ctx.rojoMap.length : 'none'}`);
     return _ctx;
 }
 
@@ -331,10 +351,13 @@ function readSourceTexts(workspaceRoot, config) {
     const directoriesToScan = config.get('directoriesToScan') || [];
     const ignorePatterns = compileIgnorePatterns(config.get('ignoreDirectories') || []);
 
+    // No editor means no unsaved buffers to prefer; everything comes from disk below.
     const openTexts = new Map();
-    vscode.workspace.textDocuments.forEach(doc => {
-        if (doc.uri.scheme === 'file') openTexts.set(doc.uri.fsPath, doc.getText());
-    });
+    if (vscode) {
+        vscode.workspace.textDocuments.forEach(doc => {
+            if (doc.uri.scheme === 'file') openTexts.set(doc.uri.fsPath, doc.getText());
+        });
+    }
 
     const texts = new Map();
     for (const filePath of collectSourceFiles(workspaceRoot, directoriesToScan, ignorePatterns)) {
@@ -491,6 +514,7 @@ module.exports = {
     REQUIRE_STRING,
     RESERVED_ALIASES,
     refreshContext,
+    createContext,
     getContext,
     invalidateContext,
     collectSourceFiles,
