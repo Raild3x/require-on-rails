@@ -1,25 +1,49 @@
 # RequireOnRails
 
-An opinionated Roblox Luau utility extension that simplifies working with complex codebase hierarchies by automatically generating file aliases and managing import statements. It works in conjunction with Luau LSP and a custom requirer module in order to parse the non-standard string paths.
+An opinionated Roblox Luau utility extension that simplifies working with complex codebase hierarchies. It manages your require paths in one of two ways: by **generating `.luaurc` aliases** so modules can be required by basename and resolved at runtime, or by **writing full, statically-resolvable paths** into your source as you type.
 
-RequireOnRails does *not* prevent you from utilizing any default require behaviors. If the Luau module detects a non aliased path it will fall back to the default Roblox require behavior.
+RequireOnRails does *not* prevent you from utilizing any default require behaviors. If a path is not one it manages, it falls back to the default Roblox require behavior.
+
+**[Choosing a Mode](#choosing-a-mode)** · **[Features](#features)** · **[Requirements](#requirements)** · **[Setup and Usage](#setup-and-usage)** · **[Settings and Commands](#extension-settings-and-commands)** · **[Troubleshooting](#troubleshooting)**
+
+## Choosing a Mode
+
+RequireOnRails runs in one of two modes per workspace. You are asked which on first activation, and you can switch any time with **RequireOnRails: Select Mode**.
+
+| | **Dynamic** *(default)* | **Explicit** |
+|---|---|---|
+| You type | `require("@MyModule")` | `require("@MyModule")` |
+| What ends up in your source | `require("@MyModule")` | `require("@Shared/Stuff/MyModule")` |
+| Resolved | at runtime, by the Luau module | at edit time, by the extension |
+| `.luaurc` | generated for you | **yours** — the extension only reads it |
+| Luau runtime module | required | only for the `alias` path style |
+| `require = Import(script)` boilerplate | required in every file | not used, except with the `alias` style |
+| Duplicate basenames | ambiguous — no alias is generated | fine — completion lists every candidate |
+| Moving a file | requires keep working untouched | you are prompted to rewrite the paths |
+| Best for | the shortest possible require lines | no runtime dependency, greppable paths |
+
+In **explicit** mode the `explicitPathStyle` setting decides the form written into your files:
+
+- **`alias`** (default) — `@Shared/Stuff/MyModule`, built from the longest matching alias in your `.luaurc`. Still needs the Luau runtime module, because Roblox does not support `.luaurc` aliases natively.
+- **`relative`** — `./Stuff/MyModule`. Resolved natively by Roblox; no runtime dependency.
+- **`game`** — `@game/ReplicatedStorage/src/Shared/Stuff/MyModule`. Resolved natively by Roblox, mapped through your Rojo project file.
+
+Enable `preferRelativePaths` to write the relative form whenever it is strictly shorter than the styled form.
 
 ## Features
 
-### Two Modes
+### What both modes do
 
-RequireOnRails runs in one of two modes per workspace (you are asked on first activation; switch any time via `RequireOnRails: Select Mode`):
+- **Smart directory scanning** — scans the directories you configure for `.lua`/`.luau` files, treats `init.lua`/`init.luau` as the containing folder, and skips directories matching `ignoreDirectories` (by default anything prefixed with `_`, such as Wally's `_Index`).
+- **Rename and move detection** — notices when files move and offers to update the requires that pointed at them.
+- **Problems-panel diagnostics** — requires that cannot resolve are reported with the reason.
+- **Status bar integration** — toggle the extension on and off, and open the menu, from the status bar.
 
-- **`dynamic`** (default) — the behavior described below: basename aliases are generated into `.luaurc` and resolved at runtime by the RequireOnRails Luau module.
-- **`explicit`** — no aliases are generated and the extension never writes `.luaurc` (it is yours to maintain). Instead, the extension helps you write full, statically-resolvable paths: typing `require("@myModule")` offers completions for every known module (closest first) and, if you finish typing without picking one, rewrites the name to the closest match — e.g. `require("@Shared/Stuff/myModule")`. Moving or renaming files prompts to update requires that pointed at them ("inbound"), and silently fixes relative requires inside the moved files ("outbound"). The `explicitPathStyle` setting picks the output form:
-  - `alias` — `@Shared/Stuff/myModule`, using the longest matching alias from your `.luaurc` (still needs the Luau runtime module, since Roblox does not support `.luaurc` aliases natively)
-  - `relative` — `./Stuff/myModule` (native Roblox resolution, zero runtime dependency)
-  - `game` — `@game/ReplicatedStorage/...` (native Roblox resolution, mapped through your Rojo project file)
+![Status Button Image](images/ReadMe/StatusButtonImage.jpeg)
 
-  With `preferRelativePaths` enabled, the relative form is written whenever it is strictly shorter. The `RequireOnRails: Rewrite All Requires to Current Style` command migrates an existing codebase or re-renders after a style change.
+### Dynamic mode
 
-### Automatic File Alias Generation (dynamic mode)
-RequireOnRails scans your workspace directories and automatically generates aliases in your `.luaurc` file, allowing you to import modules by their basename instead of complex relative paths.
+**Automatic file alias generation.** Aliases are written into your `.luaurc` from file basenames, so you can require a module by name instead of by path.
 
 **Before:**
 ```lua
@@ -31,45 +55,26 @@ local MyModule = require(script.Parent.Parent.Shared.Utils.MyModule)
 local MyModule = require("@MyModule")
 ```
 
-<details>
-<summary>More Features:</summary>
+- **Import line management** — the boilerplate import lines are dimmed in the editor, keeping your files readable while staying functional. Both single-line and multiline forms are recognised, including type annotations and comments.
+- **Import insertion** — missing import require definitions are detected and can be inserted automatically, with a configurable template and placement.
+- **Ambiguity handling** — duplicate basenames are reported rather than silently guessed, and `pathPriority` can pick a winner.
 
-### Import Line Management
-The extension automatically hides or reduces the opacity of boilerplate import lines in your Luau files, keeping your editor clean while maintaining functionality.
+### Explicit mode
 
-### Smart Directory Scanning
-- Scans specified directories for `.lua` and `.luau` files
-- Handles `init.lua` files by aliasing the containing folder name
-- Resolves naming conflicts by preferring unique basenames
-- Ignores specified directories (like directories starting with `_` for private modules)
-
-### Require Statement Updates
-- Automatically detects file renames and moves
-- Prompts to update basename require statements when files are renamed
-- Handles absolute path updates when files are moved between alias directories
-- Configurable collision detection with automatic duplicate file renaming
-
-### Import Management Enhancements
-- Automatic import require definition detection and insertion
-- Multiple placement options for import statements (top of file, before first require, after services)
-- Optional Selene comment support for import lines
-- Centralized import validation logic
-- Configurable contextual import insertion template via `require-on-rails.contextualImportTemplate`
-- Supports both single-line and multiline contextual import detection/hiding (including optional type annotations/comments)
-
-### Status Bar Integration
-Toggle the extension on/off with a convenient status bar button showing the current state.
-
-![Status Button Image](images/ReadMe/StatusButtonImage.jpeg)
-
-</details>
+- **Completion** — typing `require("@MyMo` lists every matching module, nearest to the editing file first, with the full path it will insert shown greyed-out on each row so you can tell same-named modules apart without selecting them.
+- **Auto-replace** — finish typing `require("@MyModule")` without picking a suggestion and the name is rewritten to the closest match's full path when your cursor leaves the string. Saving sweeps anything missed.
+- **Full-resolution diagnostics** — every require string is resolved against the filesystem, so a path broken by a move is flagged instead of failing at runtime.
+- **Move handling** — requires elsewhere that point at a moved file are updated after you confirm; relative requires *inside* a moved file are fixed automatically.
+- **Bulk restyle** — **Rewrite All Requires to Current Style** re-renders every resolvable require, which is also how you migrate a codebase from dynamic mode.
 
 ## Requirements
+
 - Visual Studio Code
 - Luau LSP VSCode extension (or some other form of Roblox Luau language support)
-- RequireOnRails Luau module
-- A project structure with unique file basenames (no duplicate names across scanned directories)
-  
+- **The RequireOnRails Luau module** — required in dynamic mode, and in explicit mode only when using the `alias` path style. The `relative` and `game` styles need no runtime dependency.
+- **A Rojo project file** — only for explicit mode's `game` path style, to map files to DataModel paths.
+- **Unique file basenames** across scanned directories — required in dynamic mode. Explicit mode handles duplicates fine.
+
 ### Default Expected Project Structure
 For the default configuration settings, RequireOnRails expects the following project structure:
 
@@ -84,7 +89,7 @@ your-project/
 │   ├── Server/           # Server-side code (@Server alias)
 │   ├── Client/           # Client-side code (@Client alias)
 │   └── Shared/           # Shared code (@Shared alias)
-├── .luaurc               # Generated/maintained by extension
+├── .luaurc               # Generated in dynamic mode; yours in explicit mode
 ├── default.project.json
 └── wally.toml
 ```
@@ -94,22 +99,34 @@ Your project will likely look something like this:
 
 If your project structure does not follow this exactly then you can configure the extension settings to match your project as needed.
 
-## Quick Start
+## Setup and Usage
 
-### Option 1: Use Template
+Whichever mode you use, start here:
+
+1. Install the extension and open your project folder.
+2. Set `require-on-rails.directoriesToScan` to the directories holding your modules (see [Settings](#extension-settings-and-commands)).
+3. Pick a mode when prompted on first activation, or run **RequireOnRails: Select Mode**.
+4. Activate RequireOnRails with the status bar button.
+
+Then open the guide for your mode below.
+
+<details>
+<summary><b>▶ Dynamic Mode — setup and daily use</b></summary>
+
+### Quick start
+
+**Option 1: Use the template**
 1. Open a fresh workspace in VS Code
 2. Open Command Palette (`Ctrl+Shift+P`)
 3. Run `RequireOnRails: Setup Default Project Structure`
 4. Activate RequireOnRails using the status bar button
 5. Start coding with `require("@ModuleName")` syntax!
 
-### Option 2: Manual Setup
+**Option 2: Manual setup**
 1. Create your project structure manually
 2. Configure `directoriesToScan`, `manualAliases`, and `importModulePaths` in VS Code settings to match your project
 3. Get the RequireOnRails Luau module (You can use the `downloadLuauModule` command) and set up your import system
 4. Activate RequireOnRails using the status bar button
-
-## Setup Guide
 
 ### 1. Configuration
 Adjust these key settings to match your project structure in your VS Code settings (`.vscode/settings.json`):
@@ -172,8 +189,9 @@ Ensure your project follows a structure where:
 local Import = require(ReplicatedStorage.src.Import)
 require = Import(script)
 ```
+
 <details>
-<summary>`Import.luau` Module Example</summary>
+<summary><b>Import.luau example and Luau module configuration reference</b></summary>
 
 ```lua
 --// Services //--
@@ -218,9 +236,7 @@ end
 
 return ImportGenerator
 ```
-</details>
-<details>
-<summary>Luau Module Configuration Reference</summary>
+
 All options are passed to `RequireOnRails.create { … }`:
 
 | Option | Type | Default | Description |
@@ -232,9 +248,10 @@ All options are passed to `RequireOnRails.create { … }`:
 | `MaxSearchDepth` | `number?` | `50` | Maximum folder depth for ambiguous searches. Does not apply to explicit absolute paths. |
 | `CaseSensitive` | `boolean?` | `true` | When `false`, path segments are matched case-insensitively. |
 | `DisableCache` | `boolean?` | `false` | When `true`, skips the module-path → instance lookup cache, re-resolving on every call. Native Luau `require()` still caches module execution results. |
+
 </details>
 
-## Usage
+### Daily use
 
 1. **File Organization**: Organize your Luau files in the directories specified in `directoriesToScan`. Ensure your `Import` module file is setup.
 
@@ -246,15 +263,106 @@ All options are passed to `RequireOnRails.create { … }`:
 
 5. **File Operations**: When you rename or move files, the extension will detect the operation and prompt to update require statements accordingly
 
-## Important Notes
+### Important notes
 
 ⚠️ **Ambiguous Basenames**: Duplicate basenames across scanned directories are ambiguous by default and no alias is generated. You can set `pathPriority` to resolve some collisions, but only if exactly one candidate matches the highest-priority matched path.
 
 ⚠️ **Configuration Required**: You must configure `directoriesToScan` and `importModulePaths` to match your specific project structure.
 
-⚠️ **RequireOnRails Module**: This extension requires a separate Luau module to function. The module is available via Wally.
+⚠️ **RequireOnRails Module**: This mode requires a separate Luau module to function. The module is available via Wally.
 
 ⚠️ **Import override**: Ensure each script sets the global `require` override (for example via the default multiline snippet). You may localize the import function variable (e.g. `local Import = ...`), but the final override must assign to global `require`.
+
+</details>
+
+<details>
+<summary><b>▶ Explicit Mode — setup and daily use</b></summary>
+
+### 1. Turn it on
+
+Choose **Explicit** at the first-activation prompt, or run **RequireOnRails: Select Mode** at any time. The choice is saved to your workspace settings.
+
+Nothing else is generated: the extension stops writing `.luaurc` entirely and builds an in-memory index of your modules instead.
+
+### 2. Pick a path style
+
+Set `require-on-rails.explicitPathStyle` to the form you want written into your files.
+
+**`alias`** (default) — `require("@Shared/Stuff/MyModule")`
+
+Paths are rooted at the longest matching alias in your `.luaurc`. In this mode **`.luaurc` is yours to maintain** — write the roots you want by hand:
+
+```jsonc
+// .luaurc
+{
+    "aliases": {
+        "Server": "src/Server",
+        "Client": "src/Client",
+        "Shared": "src/Shared"
+    }
+}
+```
+
+Because Roblox does not support `.luaurc` aliases natively, this style still needs the RequireOnRails Luau module and the import boilerplate — see the dynamic mode guide's *Import System Setup* for that. The module only has to expand the alias; it never searches.
+
+**`relative`** — `require("./Stuff/MyModule")`
+
+Resolved natively by Roblox. No runtime module, no import boilerplate, no `.luaurc` needed.
+
+**`game`** — `require("@game/ReplicatedStorage/src/Shared/Stuff/MyModule")`
+
+Also resolved natively by Roblox. Paths are mapped from your Rojo project file, found via `require-on-rails.rojoProjectPath` (defaults to `default.project.json`). The mapping is read from each `$path` entry in the project tree.
+
+> ⚠️ Glob `$path` values and `globIgnorePaths` are not supported. If a file is only reachable through a glob, `@game` paths to it will not resolve.
+
+Set `require-on-rails.preferRelativePaths` to `true` to use the relative form whenever it is strictly shorter than the style above, which keeps requires to nearby files short.
+
+### 3. Writing requires
+
+Type a require and start the module name with `@`:
+
+```lua
+local MyModule = require("@MyMo
+```
+
+A completion list appears with every module whose name matches, closest to the file you are editing first, with the full path each one inserts shown greyed-out beside it. Pick one and the full path is inserted.
+
+If you finish typing a bare name without picking anything — `require("@MyModule")` — it is rewritten to the closest match as soon as your cursor leaves the string:
+
+```lua
+local MyModule = require("@Shared/Stuff/MyModule")
+```
+
+Saving the file sweeps any bare names that were missed. The sweep deliberately skips any require string your cursor is currently inside, so it is safe with `files.autoSave` set to `afterDelay`.
+
+A name that is already an alias root in your `.luaurc` is left alone, and so is a name that matches no known module — that one gets a warning in the Problems panel instead.
+
+### 4. Renaming and moving files
+
+Moving a file breaks two different things, so they are handled differently:
+
+- **Requires elsewhere that point at the moved file** — you are asked first. Choosing *No* leaves them pointing at the old path, which is what you want when you are deprecating a module and dropping a replacement with the same name in its place.
+- **Relative requires inside the moved file** — fixed automatically, since they broke purely because the file moved.
+
+Both are applied as normal editor edits, so `Ctrl+Z` undoes them.
+
+### 5. Changing style, or migrating from dynamic mode
+
+Run **RequireOnRails: Rewrite All Requires to Current Style**. It re-renders every require it can resolve into the current `explicitPathStyle`, and reports anything it could not resolve so you can fix those by hand.
+
+This is also the migration path from dynamic mode: switch the mode, then run this command to expand every `@Basename` into a full path.
+
+### Important notes
+
+⚠️ **`.luaurc` is yours**: The extension never writes it in this mode. If you switched over from dynamic mode, the aliases it generated previously are still in there — prune them by hand, keeping only the roots you want.
+
+⚠️ **The `alias` style still needs the runtime module**: Only `relative` and `game` are free of it. If you want zero runtime dependency, do not use the `alias` style.
+
+⚠️ **Ignored settings are flagged**: Settings that do nothing in your current mode get a warning on your `.vscode/settings.json`, so you are not left tuning a value with no effect.
+
+⚠️ **Duplicate basenames are fine here**: They are not ambiguous — completion simply offers each candidate, and the closest one wins if you do not choose.
+
+</details>
 
 ## Extension Settings and Commands
 <details>
@@ -262,34 +370,44 @@ All options are passed to `RequireOnRails.create { … }`:
 
 This extension contributes the following settings through `require-on-rails.*`:
 
-### Core Settings
+### Shared Settings
 
-* `require-on-rails.startsImmediately`: 
-  - **Type**: `boolean`
-  - **Default**: `false`
-  - **Description**: Whether to start the extension automatically when VS Code finishes loading
+These apply in both modes.
 
 * `require-on-rails.mode`:
   - **Type**: `string` (`"dynamic"` | `"explicit"`)
   - **Default**: `"dynamic"`
   - **Description**: How requires are resolved. `dynamic` generates basename aliases resolved at runtime; `explicit` writes full, statically-resolvable paths into your source at edit time and never touches `.luaurc`
 
-* `require-on-rails.explicitPathStyle`:
-  - **Type**: `string` (`"alias"` | `"relative"` | `"game"`)
-  - **Default**: `"alias"`
-  - **Description**: Explicit mode only: the form written when completing or rewriting a require path. `alias` still requires the Luau runtime module; `relative` and `game` are resolved natively by Roblox
-
-* `require-on-rails.preferRelativePaths`:
+* `require-on-rails.startsImmediately`: 
   - **Type**: `boolean`
   - **Default**: `false`
-  - **Description**: Explicit mode only: write the relative form instead of the styled form whenever it has strictly fewer segments
+  - **Description**: Whether to start the extension automatically when VS Code finishes loading
 
-* `require-on-rails.rojoProjectPath`:
-  - **Type**: `string`
-  - **Default**: `"default.project.json"`
-  - **Description**: Explicit mode only: the Rojo project file used to map files to DataModel paths for the `game` path style. Glob `$path` values and `globIgnorePaths` are not supported
+* `require-on-rails.directoriesToScan`: 
+  - **Type**: `array<string>`
+  - **Default**: `["src/Server", "src/Client", "src/Shared"]`
+  - **Description**: List of directories to scan for modules (relative to workspace root). Dynamic mode generates aliases from these; explicit mode builds its completion index from them. 
+  - ***⚠️ Modify this to match your project structure!***
 
-### Import Management
+* `require-on-rails.ignoreDirectories`: 
+  - **Type**: `array<string>`
+  - **Default**: `["^_.*"]`
+  - **Description**: Regex patterns for directories/files to ignore when scanning. By default ignores anything prefixed with underscore. Useful for ignoring things like the `_Index` folder for Wally packages.
+
+* `require-on-rails.pathPriority`:
+  - **Type**: `array<string>`
+  - **Default**: `[]`
+  - **Description**: Ordered path prefixes, earlier entries higher priority. In dynamic mode this resolves ambiguous auto-generated aliases: if exactly one candidate for a basename matches the highest-priority matched prefix, that alias is generated; if multiple candidates match that same prefix, it remains ambiguous and is not generated. In explicit mode it breaks ties between equally-close completion candidates.
+
+### Dynamic Mode Settings
+
+These have no effect in explicit mode.
+
+* `require-on-rails.manualAliases`: 
+  - **Type**: `object`
+  - **Default**: `{"Server": "src/Server", "Client": "src/Client", "Shared": "src/Shared"}`
+  - **Description**: Manual aliases for absolute path support. Maps alias names to their corresponding directory paths (relative to workspace root). Written into `.luaurc` ahead of generated aliases, and never overwritten by them.
 
 * `require-on-rails.importModulePaths`: 
   - **Type**: `array<string>`
@@ -326,13 +444,6 @@ This extension contributes the following settings through `require-on-rails.*`:
     - `BeforeFirstRequire`: Place import before the first require statement  
     - `AfterDefiningRobloxServices`: Place import after Roblox service definitions (game:GetService calls)
 
-* `require-on-rails.addSeleneCommentToImport`: 
-  - **Type**: `boolean`
-  - **Default**: `false`
-  - **Description**: Whether to add a Selene comment to disable warnings for the import require definition line
-
-### File Operation Settings
-
 * `require-on-rails.enableBasenameUpdates`: 
   - **Type**: `boolean`
   - **Default**: `true`
@@ -348,28 +459,26 @@ This extension contributes the following settings through `require-on-rails.*`:
   - **Default**: `false`
   - **Description**: Whether to detect and handle filename collisions by automatically renaming files with '_Duplicate' suffix
 
-### Directory Configuration
+*Note: import placement, opacity and insertion also apply in explicit mode when `explicitPathStyle` is `alias`, since that style still uses the runtime module.*
 
-* `require-on-rails.directoriesToScan`: 
-  - **Type**: `array<string>`
-  - **Default**: `["src/Server", "src/Client", "src/Shared"]`
-  - **Description**: List of directories to scan for generating file aliases (relative to workspace root) 
-  - ***⚠️ Modify this to match your project structure!***
+### Explicit Mode Settings
 
-* `require-on-rails.ignoreDirectories`: 
-  - **Type**: `array<string>`
-  - **Default**: `["^_.*"]`
-  - **Description**: Regex patterns for directories/files to ignore when scanning. By default ignores anything prefixed with underscore. Useful for ignoring things like the `_Index` folder for Wally packages.
+These have no effect in dynamic mode.
 
-* `require-on-rails.manualAliases`: 
-  - **Type**: `object`
-  - **Default**: `{"Server": "src/Server", "Client": "src/Client", "Shared": "src/Shared"}`
-  - **Description**: Manual aliases for absolute path support. Maps alias names to their corresponding directory paths (relative to workspace root). Used for absolute require path updates when files are moved between different alias directories.
+* `require-on-rails.explicitPathStyle`:
+  - **Type**: `string` (`"alias"` | `"relative"` | `"game"`)
+  - **Default**: `"alias"`
+  - **Description**: The form written when completing or rewriting a require path. `alias` still requires the Luau runtime module; `relative` and `game` are resolved natively by Roblox
 
-* `require-on-rails.pathPriority`:
-  - **Type**: `array<string>`
-  - **Default**: `[]`
-  - **Description**: Ordered path prefixes used to resolve ambiguous auto-generated aliases. Earlier entries are higher priority. If exactly one candidate for a basename matches the highest-priority matched prefix, that alias is generated. If multiple candidates match that same highest-priority prefix, the alias remains ambiguous and is not generated.
+* `require-on-rails.preferRelativePaths`:
+  - **Type**: `boolean`
+  - **Default**: `false`
+  - **Description**: Write the relative form instead of the styled form whenever it has strictly fewer segments
+
+* `require-on-rails.rojoProjectPath`:
+  - **Type**: `string`
+  - **Default**: `"default.project.json"`
+  - **Description**: The Rojo project file used to map files to DataModel paths for the `game` path style. Glob `$path` values and `globIgnorePaths` are not supported
 
 ### Post-Processing
 
@@ -377,7 +486,7 @@ This extension contributes the following settings through `require-on-rails.*`:
   - **Type**: `array<string>`
   - **Default**: `[]`
   - **Scope**: Set it in your User settings to run commands in *every* workspace. A workspace may also request commands, but those only run in that workspace and only after you approve them (see below).
-  - **Description**: Shell commands to run after aliases are regenerated. Each command is executed from the workspace root. Commands run serially within a batch; rapid file changes that trigger multiple regenerations will queue at most one pending run, preventing duplicate concurrent executions. Skipped entirely in untrusted workspaces.
+  - **Description**: Shell commands to run after aliases are regenerated. Each command is executed from the workspace root. Commands run serially within a batch; rapid file changes that trigger multiple regenerations will queue at most one pending run, preventing duplicate concurrent executions. Skipped entirely in untrusted workspaces. *Dynamic mode only — explicit mode never regenerates aliases.*
   - **Example**:
     ```jsonc
     "require-on-rails.onAliasesRegenerated": [
@@ -416,24 +525,26 @@ return.
 
 RequireOnRails provides the following commands accessible via Command Palette (`Ctrl+Shift+P`):
 
-All commands are prefixed with `RequireOnRails:` in the palette:
+All commands are prefixed with `RequireOnRails:` in the palette. The menu hides the ones that do not apply to your current mode.
 
 * **Open Menu**: A quick-pick menu of every RequireOnRails action (also opened by clicking the status bar name)
 * **Toggle Active**: Enable or disable RequireOnRails functionality
-* **Setup Default Project Structure**: Setup a project structure ready out of the box for RequireOnRails
-* **Download Luau Module**: Download the RequireOnRails Luau module via Wally package manager or as a raw Luau file
-* **Add Import Definition to All Files**: Automatically add import require definitions to all files that need them
-* **Regenerate Aliases**: Force regeneration of all aliases (useful for troubleshooting)
-* **Manage Alias Regeneration Commands**: Review the `onAliasesRegenerated` commands this workspace requests, and approve or revoke each one for this workspace
-* **Check for Updates**: Check whether a newer RequireOnRails Luau package is available
 * **Select Mode**: Choose between `dynamic` alias generation and `explicit` path writing for this workspace
-* **Rewrite All Requires to Current Style**: Explicit mode: re-render every resolvable require string to the current path style (also the migration path when switching from dynamic mode)
+* **Setup Default Project Structure**: Setup a project structure ready out of the box for RequireOnRails
+* **Regenerate Aliases**: Force regeneration of all aliases, or in explicit mode a rescan of the module index (useful for troubleshooting)
+* **Download Luau Module** *(dynamic, or explicit with the `alias` style)*: Download the RequireOnRails Luau module via Wally package manager or as a raw Luau file
+* **Add Import Definition to All Files** *(dynamic, or explicit with the `alias` style)*: Automatically add import require definitions to all files that need them
+* **Manage Alias Regeneration Commands** *(dynamic only)*: Review the `onAliasesRegenerated` commands this workspace requests, and approve or revoke each one for this workspace
+* **Rewrite All Requires to Current Style** *(explicit only)*: Re-render every resolvable require string to the current path style (also the migration path when switching from dynamic mode)
+* **Check for Updates**: Check whether a newer RequireOnRails Luau package is available
 
 </details>
 
 ## Troubleshooting
 <details>
 <summary>Common Issues</summary>
+
+### Dynamic mode issues
 
 **Q: My aliases aren't generating**
 - Check that `directoriesToScan` matches your actual directory structure
@@ -489,8 +600,39 @@ Common reasons a file is skipped:
 - Verify the template includes `{IMPORT_MODULE_PATH}`
 - If placeholder is missing, RequireOnRails warns and uses the default template
 
-**Q: Selene comments not appearing**
-- Make sure `addSeleneCommentToImport` is set to `true`
-- Verify that a `selene.toml` file exists in your workspace root
-- Check that the import statement is being added successfully first
+**Q: My selene comment above the import isn't being dimmed**
+- RequireOnRails dims an existing `-- selene: allow(incorrect_standard_library_use)` line directly above the import block, but it does not add one for you
+- Confirm the comment text matches exactly and sits immediately above the import lines
+- Confirm `importOpacity` is not set near `1.0`
+
+### Explicit mode issues
+
+**Q: No completions appear when I type `require("@`**
+- Confirm the mode is actually `explicit` (the status bar menu shows the current mode)
+- Verify RequireOnRails is activated (check status bar)
+- Completions only offer bare module names; once the string contains a `/`, path completion is left to Luau LSP
+- Check that the module lives under `directoriesToScan` and isn't excluded by `ignoreDirectories`
+
+**Q: My bare `@Name` require wasn't rewritten**
+- The rewrite fires when the cursor *leaves* the string, and the save sweep skips any require your cursor is still inside — click elsewhere first
+- A name matching an existing `.luaurc` alias root is deliberately left alone
+- A name matching no known module is left alone too, and flagged in the Problems panel instead
+- Requires on commented-out lines are ignored by design
+
+**Q: `@game/...` paths don't resolve**
+- Check `rojoProjectPath` points at your real Rojo project file
+- The mapping comes from `$path` entries in the project tree; a file only reachable through a glob `$path` cannot be mapped
+- `globIgnorePaths` is not consulted
+
+**Q: A setting has a warning squiggle in my `settings.json`**
+- That means the setting does nothing in your current mode or path style — the message names the reason
+- Either switch mode/style, or remove the setting
+
+**Q: I switched from dynamic mode and my `.luaurc` is full of generated aliases**
+- Expected: explicit mode never writes `.luaurc`, so whatever dynamic mode last generated is still there
+- Prune it by hand down to the root aliases you want, then run **Rewrite All Requires to Current Style**
+
+**Q: My requires still use short names after switching to explicit mode**
+- Run **RequireOnRails: Rewrite All Requires to Current Style** to expand the existing ones; the extension only rewrites as you edit otherwise
+
 </details>
