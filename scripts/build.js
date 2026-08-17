@@ -7,8 +7,8 @@
  *   1. Version bump  — Interactively prompts for a semver bump type (patch /
  *      minor / major / skip), updates `package.json`, and stamps the new
  *      version into `CHANGELOG.md` (promoting the `[Unreleased]` section).
- *   2. Compilation   — Runs `npm run compile` (TypeScript transpilation; a
- *      no-op when TS is disabled, logged as a warning rather than an error).
+ *   2. Typecheck     — Runs `npm run typecheck` (tsc --noEmit over the JSDoc-
+ *      annotated sources). Nothing is emitted; a failure aborts the build.
  *   3. Testing       — Runs the full `npm test` suite; a failure aborts the
  *      build so a broken package is never produced.
  *   4. Packaging     — Invokes `vsce package` to produce the distributable
@@ -146,13 +146,14 @@ async function build() {
             console.log('\nSkipping version update');
         }
         
-        // Run compilation
-        console.log('\nRunning compilation...');
+        // Typecheck before the slow test run, so type breakage fails fast.
+        console.log('\nRunning typecheck...');
         try {
-            execSync('npm run compile', { stdio: 'inherit', cwd: path.join(__dirname, '..') });
-            console.log('✓ Compilation completed');
+            execSync('npm run typecheck', { stdio: 'inherit', cwd: path.join(__dirname, '..') });
+            console.log('✓ Typecheck passed');
         } catch (error) {
-            console.log('⚠ Compilation step skipped (TypeScript disabled)');
+            console.error('✗ Typecheck failed');
+            throw error;
         }
         
         // Run tests
