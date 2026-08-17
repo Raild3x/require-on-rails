@@ -234,7 +234,7 @@ function checkLuaurcDrift(workingDir, aliases) {
 /**
  * Runs every check appropriate to the project's mode.
  * @param {string} workingDir - Project root containing .vscode/settings.json
- * @returns {{findings: object[], config: object}}
+ * @returns {object[]} Findings, empty when the project is clean
  */
 function runChecks(workingDir) {
     const config = loadConfig(workingDir);
@@ -252,20 +252,17 @@ function runChecks(workingDir) {
                     unresolved.endColumn, 'unresolved-require', unresolved.message));
             }
         }
-        return { findings, config };
+        return findings;
     }
 
     const { basenameMap } = buildBasenameMap(workingDir, config);
     const { aliases, ambiguousAliases } = classifyBasenames(basenameMap, config);
 
-    return {
-        config,
-        findings: [
-            ...checkAmbiguous(ambiguousAliases),
-            ...checkDynamicRequires(workingDir, config, aliases, ambiguousAliases),
-            ...checkLuaurcDrift(workingDir, aliases)
-        ]
-    };
+    return [
+        ...checkAmbiguous(ambiguousAliases),
+        ...checkDynamicRequires(workingDir, config, aliases, ambiguousAliases),
+        ...checkLuaurcDrift(workingDir, aliases)
+    ];
 }
 
 // ---------------------------------------------------------------------------
@@ -333,7 +330,7 @@ function main(argv = process.argv.slice(2)) {
 
     let findings;
     try {
-        findings = runChecks(workingDir).findings;
+        findings = runChecks(workingDir);
     } catch (e) {
         if (!(e instanceof ConfigError)) throw e;
         console.log(`::error::RequireOnRails: ${escapeData(e.message)}`);
@@ -348,4 +345,5 @@ if (require.main === module) {
     process.exitCode = main();
 }
 
-module.exports = { main, runChecks, loadConfig, parseJsonc, getInput };
+// Exported for the tests in test/cli; everything else is reached through the command line.
+module.exports = { loadConfig, parseJsonc };

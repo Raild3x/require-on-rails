@@ -4,6 +4,7 @@ const { exec } = require('child_process');
 // Optional: this module's scanning and classification logic is also used by the CI checker,
 // which runs in plain Node where the vscode module does not exist. Only the editor-facing
 // functions below dereference it.
+/** @type {typeof import('vscode') | null} */
 let vscode = null;
 try { vscode = require('vscode'); } catch (e) { /* running outside VS Code */ }
 const { print, warn, error, debug, trace, showOutputChannel } = require('../core/logger');
@@ -301,6 +302,7 @@ function announceWorkspaceCommands(pending) {
     pending.forEach(c => warn(`    ${c}`));
     warn('Approve them for this workspace from the notification, or put them in require-on-rails.onAliasesRegenerated in your User settings to run them in every workspace.');
 
+    if (!vscode) return;
     const review = 'Review Commands';
     vscode.window.showWarningMessage(
         `RequireOnRails: this workspace wants to run ${pending.length} command(s) after aliases regenerate. They are being ignored until you approve them.`,
@@ -338,6 +340,7 @@ function announceWorkspaceCommands(pending) {
 // itself once per session, so without a way in from the palette a dismissed prompt is
 // unreachable until the window reloads, and an approval can never be withdrawn.
 function getAliasCommandApprovalState() {
+    if (!vscode) throw new Error('getAliasCommandApprovalState requires VS Code.');
     const config = vscode.workspace.getConfiguration(extenionName);
     const { userCommands, workspaceCommands } = getAliasCommands(config);
     return {
@@ -388,6 +391,7 @@ function announceAmbiguousAliases(ambiguousAliases) {
     warn(`${summary}. Requires of these names will not resolve:`);
     names.forEach(name => warn(`    "${name}" found in: ${ambiguousAliases[name].join(', ')}`));
 
+    if (!vscode) return;
     const showDetails = 'Show Details';
     const showProblems = 'Show Problems';
     vscode.window.showWarningMessage(
@@ -412,6 +416,10 @@ function announceAmbiguousAliases(ambiguousAliases) {
 //
 // Settings arrive as plain values rather than being read from VS Code here, so the CI
 // checker can supply them from a parsed settings.json.
+/**
+ * @param {string} workspaceRoot
+ * @param {{directoriesToScan?: string[], ignoreDirectories?: string[]}} [options]
+ */
 function buildBasenameMap(workspaceRoot, { directoriesToScan = [], ignoreDirectories = [] } = {}) {
     const ignoreList = ['.server', '.client'];
 
@@ -458,6 +466,10 @@ function buildBasenameMap(workspaceRoot, { directoriesToScan = [], ignoreDirecto
 //
 // Pure, so that dynamic mode's .luaurc write and the CI checker's read-only report derive the
 // same "generated alias set" from the same rules.
+/**
+ * @param {object} basenameMap
+ * @param {{pathPriority?: string[], manualAliases?: Object<string, string>}} [options]
+ */
 function classifyBasenames(basenameMap, { pathPriority = [], manualAliases = {} } = {}) {
     // Merge manual and auto-generated aliases, manual takes precedence
     const compiledAliases = {};
@@ -515,6 +527,7 @@ function classifyBasenames(basenameMap, { pathPriority = [], manualAliases = {} 
 
 // Main function to generate file aliases
 function generateFileAliases() {
+    if (!vscode) return;
     const config = vscode.workspace.getConfiguration(extenionName);
 
     // Check if workspace folders exist

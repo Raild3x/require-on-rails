@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 // Optional — see updateLuaFileAliases.js. Resolution and rendering are pure; only
 // refreshContext and the open-buffer preference in readSourceTexts touch the editor.
+/** @type {typeof import('vscode') | null} */
 let vscode = null;
 try { vscode = require('vscode'); } catch (e) { /* running outside VS Code */ }
 const { debug, warn } = require('../core/logger');
@@ -189,7 +190,7 @@ function createContext(workspaceRoot, {
 
 // Rebuilds the cached context from the current workspace and settings.
 function refreshContext() {
-    if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
+    if (!vscode || !vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
         _ctx = null;
         return null;
     }

@@ -5,7 +5,7 @@ const { exec } = require('child_process');
 const { print, warn, error } = require('../core/logger');
 const { PACKAGE_AUTHOR, PACKAGE_NAME } = require('../core/constants');
 const { getVersionFromWallyToml, getWorkspaceRoot } = require('../utils/wallyUtils');
-const { parseTOML } = require('../utils/parseTOML');
+const { parse: parseTOML } = require('../utils/parseTOML');
 
 /**
  * Parses a semantic version string into components

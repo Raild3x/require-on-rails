@@ -1,5 +1,6 @@
 // Optional — see updateLuaFileAliases.js. Required here only so that aliasDiagnostics, which
 // imports this module at load time, can itself be imported outside VS Code.
+/** @type {typeof import('vscode') | null} */
 let vscode = null;
 try { vscode = require('vscode'); } catch (e) { /* running outside VS Code */ }
 const fs = require('fs');
@@ -16,7 +17,7 @@ const DEFAULT_CONTEXTUAL_IMPORT_TEMPLATE = [
  * @returns {boolean} - True if workspace folders are available
  */
 function hasWorkspaceFolders() {
-    return vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0;
+    return !!(vscode && vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0);
 }
 
 /**
@@ -24,10 +25,7 @@ function hasWorkspaceFolders() {
  * @returns {string|null} - Workspace root path or null if not available
  */
 function getWorkspaceRoot() {
-    if (!hasWorkspaceFolders()) {
-        return null;
-    }
-    return vscode.workspace.workspaceFolders[0].uri.fsPath;
+    return vscode?.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
 }
 
 /**
@@ -37,7 +35,7 @@ function getWorkspaceRoot() {
  */
 function requireWorkspaceRoot(operationName = 'operation') {
     if (!hasWorkspaceFolders()) {
-        vscode.window.showErrorMessage(`RequireOnRails: Please open a workspace folder first to perform ${operationName}.`);
+        vscode?.window.showErrorMessage(`RequireOnRails: Please open a workspace folder first to perform ${operationName}.`);
         return null;
     }
     return getWorkspaceRoot();
@@ -91,9 +89,10 @@ function scanDirectory(dir, supportedExtensions, ignoreDirectories, callback) {
 
 /**
  * Gets the configuration for the extension
- * @returns {vscode.WorkspaceConfiguration} - Extension configuration
+ * @returns {import('vscode').WorkspaceConfiguration} - Extension configuration
  */
 function getExtensionConfig() {
+    if (!vscode) throw new Error('getExtensionConfig requires VS Code; no settings are available outside the editor.');
     return vscode.workspace.getConfiguration('require-on-rails');
 }
 

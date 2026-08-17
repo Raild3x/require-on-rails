@@ -222,7 +222,7 @@ function copyTemplateContents(templatePath, workspaceRoot) {
  * @param {string} templateFilePath - Path to the template file
  * @param {string} existingFilePath - Path to the existing file
  * @param {string} relativePath - Relative path for display purposes
- * @param {string} mergedContent - Optional merged content to write after showing diff
+ * @param {string | null} [mergedContent] - Optional merged content to write after showing diff
  */
 async function showFileDiff(templateFilePath, existingFilePath, relativePath, mergedContent = null) {
     try {
@@ -355,7 +355,7 @@ function isJsonConvertible(filePath) {
  * @param {string} templateFilePath - Path to the template JSON/JSONC file
  * @param {string} existingFilePath - Path to the existing JSON/JSONC file
  * @param {string} relativePath - Relative path for display purposes
- * @returns {string|null} - The merged JSON content as string, or null if merge failed
+ * @returns {Promise<string|null>} - The merged JSON content as string, or null if merge failed
  */
 async function mergeJson(templateFilePath, existingFilePath, relativePath) {
     try {
@@ -534,7 +534,7 @@ async function showContentDiff(relativePath, originalContent, newContent, change
  * @param {string} templateContent - Template file content
  * @param {string} existingContent - Existing file content
  * @param {string} relativePath - Relative path for display purposes
- * @returns {string|null} - The merged JSON content as string, or null if merge failed
+ * @returns {Promise<string|null>} - The merged JSON content as string, or null if merge failed
  */
 async function fallbackJsonMerge(templateContent, existingContent, relativePath) {
     try {
@@ -573,7 +573,7 @@ async function fallbackJsonMerge(templateContent, existingContent, relativePath)
  * @param {string} templateContent - Template JSON/JSONC content
  * @param {string} existingContent - Existing non-JSON content
  * @param {string} relativePath - Relative path for display purposes
- * @returns {string|null} - The merged content, or null if conversion failed
+ * @returns {Promise<string|null>} - The merged content, or null if conversion failed
  */
 async function convertAndMergeJson(templateContent, existingContent, relativePath) {
     try {

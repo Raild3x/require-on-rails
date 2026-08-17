@@ -13,8 +13,8 @@ async function getLatestVersion() {
                 warn('Failed to fetch latest version from wally, trying fallback to local wally.toml:', error.message);
                 
                 // Try fallback to local wally.toml
-                if (hasWorkspaceFolders()) {
-                    const workspaceRoot = getWorkspaceRoot();
+                const workspaceRoot = getWorkspaceRoot();
+                if (workspaceRoot) {
                     const fallbackVersion = getVersionFromWallyToml(workspaceRoot, {
                         addCaretPrefix: true,
                         logContext: 'wally search fallback'
@@ -49,8 +49,8 @@ async function getLatestVersion() {
                 // If we can't parse the version from wally search, try fallback
                 warn('Could not parse version from wally search output, trying fallback');
                 
-                if (hasWorkspaceFolders()) {
-                    const workspaceRoot = getWorkspaceRoot();
+                const workspaceRoot = getWorkspaceRoot();
+                if (workspaceRoot) {
                     const fallbackVersion = getVersionFromWallyToml(workspaceRoot, {
                         addCaretPrefix: true,
                         logContext: 'wally parse fallback'
@@ -67,8 +67,8 @@ async function getLatestVersion() {
                 warn('Error parsing wally search output:', parseError.message);
                 
                 // Try fallback before giving up
-                if (hasWorkspaceFolders()) {
-                    const workspaceRoot = getWorkspaceRoot();
+                const workspaceRoot = getWorkspaceRoot();
+                if (workspaceRoot) {
                     const fallbackVersion = getVersionFromWallyToml(workspaceRoot, {
                         addCaretPrefix: true,
                         logContext: 'parse error fallback'
@@ -200,6 +200,7 @@ ${MODULE_ACCESS_NAME} = "${PACKAGE_AUTHOR}/${PACKAGE_NAME}@${latestVersion}"
     vscode.window.showInformationMessage('RequireOnRails: Created wally.toml with RequireOnRails dependency.');
 }
 
+/** @returns {Promise<void>} */
 async function runWallyInstall(workspaceRoot) {
     return new Promise((resolve) => {
         vscode.window.showInformationMessage('RequireOnRails: Running wally install...');

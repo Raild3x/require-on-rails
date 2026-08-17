@@ -389,7 +389,7 @@ function activate(context) {
         // module, and explicit-path actions only exist in explicit mode.
         const mode = getMode();
         const isExplicit = mode === 'explicit';
-        const items = [
+        const items = /** @type {{label: string, description: string, command: string, args?: string}[]} */ ([
             isActive
                 ? { label: '$(circle-slash) Deactivate', description: 'Turn off RequireOnRails features', command: 'require-on-rails.toggleActive' }
                 : { label: '$(play) Activate', description: 'Turn on RequireOnRails features', command: 'require-on-rails.toggleActive' },
@@ -412,7 +412,7 @@ function activate(context) {
                 : null,
             { label: '$(gear) Open Extension Settings', description: 'Open RequireOnRails settings', command: 'workbench.action.openSettings', args: 'require-on-rails' },
             { label: '$(arrow-up) Check for Updates', description: 'Check for RequireOnRails package updates', command: 'require-on-rails.checkForUpdates' },
-        ].filter(Boolean);
+        ].filter(Boolean));
         const pick = await vscode.window.showQuickPick(items, { placeHolder: `RequireOnRails (${mode} mode)` });
         if (pick) {
             vscode.commands.executeCommand(pick.command, pick.args);
@@ -557,10 +557,10 @@ function activate(context) {
     // First activation in a workspace: ask which mode to use and store the answer in
     // workspace settings. Dismissal writes nothing — behavior stays dynamic (the setting's
     // default) and the choice is re-offered next activation and via the menu.
-    const modeInspection = config.inspect('mode') || {};
-    const hasModeChoice = modeInspection.workspaceValue !== undefined
-        || modeInspection.workspaceFolderValue !== undefined
-        || modeInspection.globalValue !== undefined;
+    const modeInspection = config.inspect('mode');
+    const hasModeChoice = modeInspection?.workspaceValue !== undefined
+        || modeInspection?.workspaceFolderValue !== undefined
+        || modeInspection?.globalValue !== undefined;
     if (!hasModeChoice && vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
         const dynamicChoice = 'Dynamic (aliases + runtime module)';
         const explicitChoice = 'Explicit (full paths)';

@@ -257,7 +257,9 @@ function shouldIgnoreDirectory(dirName, ignorePatterns) {
  * Shows a preview of files that will be modified
  */
 function showFilesPreview(filesToProcess, defaultImportModulePath, contextualImportTemplate) {
-    const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders) return;
+    const workspaceRoot = workspaceFolders[0].uri.fsPath;
     const relativePaths = filesToProcess.map(file => 
         path.relative(workspaceRoot, file).replace(/\\/g, '/')
     );

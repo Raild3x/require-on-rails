@@ -67,9 +67,7 @@ function readVersionFromWallyToml(wallyTomlPath) {
 /**
  * Gets version from wally.toml with workspace and extension fallback
  * @param {string} workspaceRoot - Root directory of the workspace
- * @param {object} options - Options for version retrieval
- * @param {boolean} options.addCaretPrefix - Whether to add '^' prefix to version
- * @param {string} options.logContext - Context for logging purposes
+ * @param {{addCaretPrefix?: boolean, logContext?: string}} [options] - Options for version retrieval
  * @returns {string|null} - Version string or null if not found
  */
 function getVersionFromWallyToml(workspaceRoot, options = {}) {
@@ -107,7 +105,7 @@ function getVersionFromWallyToml(workspaceRoot, options = {}) {
  * @returns {boolean} - True if workspace folders are available
  */
 function hasWorkspaceFolders() {
-    return vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0;
+    return !!(vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0);
 }
 
 /**
@@ -115,10 +113,7 @@ function hasWorkspaceFolders() {
  * @returns {string|null} - Workspace root path or null if not available
  */
 function getWorkspaceRoot() {
-    if (!hasWorkspaceFolders()) {
-        return null;
-    }
-    return vscode.workspace.workspaceFolders[0].uri.fsPath;
+    return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
 }
 
 module.exports = {

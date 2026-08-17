@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 // Optional — see updateLuaFileAliases.js. The finding and message functions are pure; only
 // the Diagnostic-building and collection functions touch the editor.
+/** @type {typeof import('vscode') | null} */
 let vscode = null;
 try { vscode = require('vscode'); } catch (e) { /* running outside VS Code */ }
 const { debug, warn } = require('../core/logger');
@@ -24,6 +25,7 @@ let _collection = null;
 let _ambiguousAliases = {};
 
 function getCollection() {
+    if (!vscode) throw new Error('aliasDiagnostics requires VS Code; diagnostics cannot be published outside the editor.');
     if (!_collection) {
         _collection = vscode.languages.createDiagnosticCollection('require-on-rails');
     }
@@ -113,6 +115,7 @@ function unresolvedAliasMessage(unresolved, ambiguousAliases) {
 }
 
 function buildDiagnostic(unresolved) {
+    if (!vscode) throw new Error('buildDiagnostic requires VS Code.');
     const { message, code } = unresolvedAliasMessage(unresolved, _ambiguousAliases);
 
     const diagnostic = new vscode.Diagnostic(
@@ -130,6 +133,7 @@ function buildDiagnostic(unresolved) {
 
 // Dynamic mode: re-reads .luaurc and reports requires whose alias root is missing.
 function refreshDynamicDiagnostics(workspaceRoot, config, collection) {
+    if (!vscode) return;
     const aliasNames = readAliasNames(workspaceRoot);
     if (!aliasNames) return;
 
@@ -190,6 +194,7 @@ function findUnresolvedRequires(text, fromFileRel, ctx) {
 
 // Explicit mode: full-resolution validation of every require string in the workspace.
 function refreshExplicitDiagnostics(workspaceRoot, config, collection) {
+    if (!vscode) return;
     const ctx = pathResolver.getContext() || pathResolver.refreshContext();
     if (!ctx) return;
 
@@ -212,6 +217,7 @@ function refreshExplicitDiagnostics(workspaceRoot, config, collection) {
 }
 
 function makeExplicitDiagnostic(found, message) {
+    if (!vscode) throw new Error('makeExplicitDiagnostic requires VS Code.');
     const diagnostic = new vscode.Diagnostic(
         new vscode.Range(
             new vscode.Position(found.line, found.startColumn),
@@ -261,6 +267,7 @@ function collectIgnoredSettings() {
 }
 
 function refreshSettingsDiagnostics(workspaceRoot, collection) {
+    if (!vscode) return;
     const settingsPath = path.join(workspaceRoot, '.vscode', 'settings.json');
     const settingsUri = vscode.Uri.file(settingsPath);
 
@@ -324,7 +331,7 @@ function refreshSettingsDiagnostics(workspaceRoot, collection) {
 // (hundreds of files) and rides the existing 500ms alias debounce. If this shows up in a
 // profile, cache by mtime.
 function refreshAliasDiagnostics() {
-    if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) return;
+    if (!vscode || !vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) return;
 
     const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
     const config = vscode.workspace.getConfiguration('require-on-rails');
@@ -353,6 +360,5 @@ module.exports = {
     findUnresolvedAliases,
     // Pure detection/reporting, shared with the CI checker so both speak the same words.
     findUnresolvedRequires,
-    unresolvedAliasMessage,
-    readAliasNames
+    unresolvedAliasMessage
 };
