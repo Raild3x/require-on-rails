@@ -100,7 +100,7 @@ function getExtensionConfig() {
  */
 function getCommonConfig() {
     const config = getExtensionConfig();
-    
+
     return {
         directoriesToScan: config.get('directoriesToScan') || [],
         ignoreDirectories: config.get('ignoreDirectories') || [],
@@ -109,8 +109,29 @@ function getCommonConfig() {
         tryToAddImportRequire: config.get('tryToAddImportRequire', true),
         preferredImportPlacement: config.get('preferredImportPlacement', 'TopOfFile'),
         importOpacity: config.get('importOpacity', 0.45),
-        contextualImportTemplate: config.get('contextualImportTemplate', DEFAULT_CONTEXTUAL_IMPORT_TEMPLATE)
+        contextualImportTemplate: config.get('contextualImportTemplate', DEFAULT_CONTEXTUAL_IMPORT_TEMPLATE),
+        mode: config.get('mode', 'dynamic'),
+        explicitPathStyle: config.get('explicitPathStyle', 'alias'),
+        preferRelativePaths: config.get('preferRelativePaths', false),
+        rojoProjectPath: config.get('rojoProjectPath', 'default.project.json')
     };
+}
+
+/** @returns {'dynamic'|'explicit'} */
+function getMode() {
+    return getExtensionConfig().get('mode', 'dynamic');
+}
+
+/** @returns {'alias'|'relative'|'game'} */
+function getExplicitPathStyle() {
+    return getExtensionConfig().get('explicitPathStyle', 'alias');
+}
+
+// The Luau runtime module can expand .luaurc aliases, so it is needed whenever require
+// strings contain them: always in dynamic mode, and in explicit mode with alias-rooted
+// paths. Roblox resolves relative and @game string requires natively.
+function runtimeModuleRequired() {
+    return getMode() === 'dynamic' || getExplicitPathStyle() === 'alias';
 }
 
 module.exports = {
@@ -121,5 +142,8 @@ module.exports = {
     shouldIgnoreDirectory,
     scanDirectory,
     getExtensionConfig,
-    getCommonConfig
+    getCommonConfig,
+    getMode,
+    getExplicitPathStyle,
+    runtimeModuleRequired
 };

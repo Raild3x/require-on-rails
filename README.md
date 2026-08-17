@@ -6,7 +6,19 @@ RequireOnRails does *not* prevent you from utilizing any default require behavio
 
 ## Features
 
-### Automatic File Alias Generation
+### Two Modes
+
+RequireOnRails runs in one of two modes per workspace (you are asked on first activation; switch any time via `RequireOnRails: Select Mode`):
+
+- **`dynamic`** (default) — the behavior described below: basename aliases are generated into `.luaurc` and resolved at runtime by the RequireOnRails Luau module.
+- **`explicit`** — no aliases are generated and the extension never writes `.luaurc` (it is yours to maintain). Instead, the extension helps you write full, statically-resolvable paths: typing `require("@myModule")` offers completions for every known module (closest first) and, if you finish typing without picking one, rewrites the name to the closest match — e.g. `require("@Shared/Stuff/myModule")`. Moving or renaming files prompts to update requires that pointed at them ("inbound"), and silently fixes relative requires inside the moved files ("outbound"). The `explicitPathStyle` setting picks the output form:
+  - `alias` — `@Shared/Stuff/myModule`, using the longest matching alias from your `.luaurc` (still needs the Luau runtime module, since Roblox does not support `.luaurc` aliases natively)
+  - `relative` — `./Stuff/myModule` (native Roblox resolution, zero runtime dependency)
+  - `game` — `@game/ReplicatedStorage/...` (native Roblox resolution, mapped through your Rojo project file)
+
+  With `preferRelativePaths` enabled, the relative form is written whenever it is strictly shorter. The `RequireOnRails: Rewrite All Requires to Current Style` command migrates an existing codebase or re-renders after a style change.
+
+### Automatic File Alias Generation (dynamic mode)
 RequireOnRails scans your workspace directories and automatically generates aliases in your `.luaurc` file, allowing you to import modules by their basename instead of complex relative paths.
 
 **Before:**
@@ -257,6 +269,26 @@ This extension contributes the following settings through `require-on-rails.*`:
   - **Default**: `false`
   - **Description**: Whether to start the extension automatically when VS Code finishes loading
 
+* `require-on-rails.mode`:
+  - **Type**: `string` (`"dynamic"` | `"explicit"`)
+  - **Default**: `"dynamic"`
+  - **Description**: How requires are resolved. `dynamic` generates basename aliases resolved at runtime; `explicit` writes full, statically-resolvable paths into your source at edit time and never touches `.luaurc`
+
+* `require-on-rails.explicitPathStyle`:
+  - **Type**: `string` (`"alias"` | `"relative"` | `"game"`)
+  - **Default**: `"alias"`
+  - **Description**: Explicit mode only: the form written when completing or rewriting a require path. `alias` still requires the Luau runtime module; `relative` and `game` are resolved natively by Roblox
+
+* `require-on-rails.preferRelativePaths`:
+  - **Type**: `boolean`
+  - **Default**: `false`
+  - **Description**: Explicit mode only: write the relative form instead of the styled form whenever it has strictly fewer segments
+
+* `require-on-rails.rojoProjectPath`:
+  - **Type**: `string`
+  - **Default**: `"default.project.json"`
+  - **Description**: Explicit mode only: the Rojo project file used to map files to DataModel paths for the `game` path style. Glob `$path` values and `globIgnorePaths` are not supported
+
 ### Import Management
 
 * `require-on-rails.importModulePaths`: 
@@ -394,6 +426,8 @@ All commands are prefixed with `RequireOnRails:` in the palette:
 * **Regenerate Aliases**: Force regeneration of all aliases (useful for troubleshooting)
 * **Manage Alias Regeneration Commands**: Review the `onAliasesRegenerated` commands this workspace requests, and approve or revoke each one for this workspace
 * **Check for Updates**: Check whether a newer RequireOnRails Luau package is available
+* **Select Mode**: Choose between `dynamic` alias generation and `explicit` path writing for this workspace
+* **Rewrite All Requires to Current Style**: Explicit mode: re-render every resolvable require string to the current path style (also the migration path when switching from dynamic mode)
 
 </details>
 

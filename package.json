@@ -2,8 +2,8 @@
   "name": "require-on-rails",
   "displayName": "RequireOnRails",
   "description": "An opinionated Roblox Luau utility extension to simplify working with complex codebase hierarchies",
-  "version": "2.2.0",
-  "publisher": "Raild3x",
+  "version": "1.0.0",
+  "publisher": "raildex",
   "icon": "images/icon_v2.png",
   "repository": {
     "type": "git",
@@ -57,12 +57,60 @@
         "command": "require-on-rails.checkForUpdates",
         "title": "Check for Updates",
         "category": "RequireOnRails"
+      },
+      {
+        "command": "require-on-rails.selectMode",
+        "title": "Select Mode",
+        "category": "RequireOnRails"
+      },
+      {
+        "command": "require-on-rails.rewriteAllRequires",
+        "title": "Rewrite All Requires to Current Style",
+        "category": "RequireOnRails"
       }
     ],
     "configuration": {
       "type": "object",
       "title": "RequireOnRails Configuration",
       "properties": {
+        "require-on-rails.mode": {
+          "type": "string",
+          "default": "dynamic",
+          "enum": [
+            "dynamic",
+            "explicit"
+          ],
+          "enumDescriptions": [
+            "Generate basename aliases into .luaurc and resolve them at runtime with the RequireOnRails Luau module.",
+            "Write full require paths into source at edit time. No aliases are generated and .luaurc is never written by the extension."
+          ],
+          "description": "How requires are resolved. 'dynamic' generates basename aliases resolved at runtime; 'explicit' writes full, statically-resolvable paths into your source at edit time."
+        },
+        "require-on-rails.explicitPathStyle": {
+          "type": "string",
+          "default": "alias",
+          "enum": [
+            "alias",
+            "relative",
+            "game"
+          ],
+          "enumDescriptions": [
+            "Alias-rooted paths like @Shared/Stuff/myModule, using the longest matching alias from .luaurc. Still requires the RequireOnRails Luau module at runtime (Roblox does not support .luaurc aliases natively).",
+            "Relative paths like ./Stuff/myModule, supported natively by Roblox string requires.",
+            "DataModel-absolute paths like @game/ReplicatedStorage/..., supported natively by Roblox. Requires a Rojo project file to map the filesystem to the DataModel."
+          ],
+          "description": "Explicit mode only: the form written when RequireOnRails completes or rewrites a require path."
+        },
+        "require-on-rails.preferRelativePaths": {
+          "type": "boolean",
+          "default": false,
+          "description": "Explicit mode only: when the relative form of a path has strictly fewer segments than the configured explicitPathStyle form, write the relative form instead."
+        },
+        "require-on-rails.rojoProjectPath": {
+          "type": "string",
+          "default": "default.project.json",
+          "description": "Explicit mode only: workspace-relative path of the Rojo project file used to map files to DataModel paths for the 'game' path style. Glob $path values and globIgnorePaths are not supported."
+        },
         "require-on-rails.startsImmediately": {
           "type": "boolean",
           "default": false,
@@ -187,6 +235,7 @@
   },
   "scripts": {
     "test": "node ./test/vs-code-extension/runners/runTest.js",
+    "playground:reset": "node scripts/reset-playground.js",
     "test:fast": "node ./test/vs-code-extension/runners/runFastTest.js",
     "pretest": "npm run compile",
     "compile": "echo TS conversion disabled",

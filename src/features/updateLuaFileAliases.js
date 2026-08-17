@@ -401,40 +401,20 @@ function announceAmbiguousAliases(ambiguousAliases) {
     });
 }
 
-// Main function to generate file aliases
-function generateFileAliases() {
+// Scans the configured directories and returns the basename -> candidate-file map. This is
+// the single source of module-index semantics (folder-init aliasing, .server/.client skip,
+// ignoreDirectories pruning): dynamic mode turns it into .luaurc aliases, explicit mode's
+// pathResolver turns it into the completion/rewrite index. Resets the per-run stats counters.
+function buildBasenameMap(workspaceRoot) {
     const config = vscode.workspace.getConfiguration(extenionName);
-    
-    // Check if workspace folders exist
-    if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
-        print('No workspace folder found. Skipping alias generation.');
-        return;
-    }
-    
-    const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
-
     const directoriesToScan = config.get('directoriesToScan') || [];
     const ignoreDirectories = config.get('ignoreDirectories') || [];
-    const rawPathPriority = config.get('pathPriority', []);
-    const pathPriority = Array.isArray(rawPathPriority) ? rawPathPriority : [];
-    const inspectedManualAliases = config.inspect('manualAliases');
-    const manualAliases = (inspectedManualAliases
-        ? (inspectedManualAliases.workspaceFolderValue
-            ?? inspectedManualAliases.workspaceValue
-            ?? inspectedManualAliases.globalValue
-            ?? inspectedManualAliases.defaultValue)
-        : null) ?? {};
     const ignoreList = ['.server', '.client'];
-    const luaurcPath = getDirPath(workspaceRoot, '.luaurc');
 
     stats = { dirsScanned: 0, dirsPruned: 0, filesSeen: 0, filesAdded: 0, filesRejected: 0 };
 
-    debug(`--- Alias generation started ---`);
-    debug(`workspaceRoot: ${workspaceRoot}`);
     debug(`directoriesToScan: ${JSON.stringify(directoriesToScan)}`);
     debug(`ignoreDirectories: ${JSON.stringify(ignoreDirectories)}`);
-    debug(`pathPriority: ${JSON.stringify(pathPriority)}`);
-    debug(`manualAliases: ${JSON.stringify(manualAliases)}`);
     debug(`file name substrings never aliased: ${JSON.stringify(ignoreList)}`);
     debug(`aliased file extensions: ${JSON.stringify(supportedExtensions)}`);
 
@@ -455,6 +435,46 @@ function generateFileAliases() {
 
     const ignorePatterns = compileIgnorePatterns(ignoreDirectories);
 
+    // Map of basename -> array of { path }
+    const basenameMap = {};
+    rootDirs.forEach(rootDir => {
+        print(`Scanning directory: ${rootDir}`);
+        scanDir(rootDir, rootDir, supportedExtensions, ignorePatterns, ignoreList, basenameMap, workspaceRoot);
+    });
+
+    trace(`Finished scanning. Found basenames: ${JSON.stringify(Object.keys(basenameMap).sort())}`);
+
+    return { basenameMap, rootDirs };
+}
+
+// Main function to generate file aliases
+function generateFileAliases() {
+    const config = vscode.workspace.getConfiguration(extenionName);
+
+    // Check if workspace folders exist
+    if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
+        print('No workspace folder found. Skipping alias generation.');
+        return;
+    }
+
+    const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
+
+    const rawPathPriority = config.get('pathPriority', []);
+    const pathPriority = Array.isArray(rawPathPriority) ? rawPathPriority : [];
+    const inspectedManualAliases = config.inspect('manualAliases');
+    const manualAliases = (inspectedManualAliases
+        ? (inspectedManualAliases.workspaceFolderValue
+            ?? inspectedManualAliases.workspaceValue
+            ?? inspectedManualAliases.globalValue
+            ?? inspectedManualAliases.defaultValue)
+        : null) ?? {};
+    const luaurcPath = getDirPath(workspaceRoot, '.luaurc');
+
+    debug(`--- Alias generation started ---`);
+    debug(`workspaceRoot: ${workspaceRoot}`);
+    debug(`pathPriority: ${JSON.stringify(pathPriority)}`);
+    debug(`manualAliases: ${JSON.stringify(manualAliases)}`);
+
     // Read and update the .luaurc file with generated aliases
     let luaurc = {};
     if (fs.existsSync(luaurcPath)) {
@@ -468,14 +488,7 @@ function generateFileAliases() {
         }
     }
 
-    // Map of basename -> array of { path }
-    const basenameMap = {};
-    rootDirs.forEach(rootDir => {
-        print(`Scanning directory: ${rootDir}`);
-        scanDir(rootDir, rootDir, supportedExtensions, ignorePatterns, ignoreList, basenameMap, workspaceRoot);
-    });
-
-    trace(`Finished scanning. Found basenames: ${JSON.stringify(Object.keys(basenameMap).sort())}`);
+    const { basenameMap, rootDirs } = buildBasenameMap(workspaceRoot);
 
     // Merge manual and auto-generated aliases, manual takes precedence
     let compiledAliases = {};
@@ -582,6 +595,7 @@ function generateFileAliases() {
 
 module.exports = {
     generateFileAliases,
+    buildBasenameMap,
     setExtensionContext,
     resetAmbiguityNotificationState,
     getAliasCommandApprovalState,

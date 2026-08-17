@@ -2,9 +2,9 @@ const fs = require('fs');
 const path = require('path');
 const vscode = require('vscode');
 const { debug, warn } = require('../core/logger');
-const { compileIgnorePatterns, findIgnoreMatch } = require('./updateLuaFileAliases');
 
-const supportedExtensions = ['.lua', '.luau'];
+const { getMode, getExplicitPathStyle, runtimeModuleRequired } = require('../utils/workspaceUtils');
+const pathResolver = require('./pathResolver');
 
 // Matches require("@Alias") / require('@Alias/Sub/Path'). Only @-prefixed strings are alias
 // requires; RequireOnRails passes anything else through to Roblox's own require.
@@ -116,81 +116,17 @@ function buildDiagnostic(unresolved) {
     return diagnostic;
 }
 
-// Collects every .lua/.luau file under the configured scan roots, pruning the same
-// directories alias generation prunes.
-function collectSourceFiles(workspaceRoot, directoriesToScan, ignorePatterns) {
-    const files = [];
-
-    function walk(dir, rootDir) {
-        let entries;
-        try {
-            entries = fs.readdirSync(dir, { withFileTypes: true });
-        } catch (e) {
-            debug(`aliasDiagnostics: could not read "${dir}" (${e.message})`);
-            return;
-        }
-
-        for (const entry of entries) {
-            const fullPath = path.join(dir, entry.name);
-            if (entry.isDirectory()) {
-                const relPath = path.relative(workspaceRoot, fullPath).replace(/\\/g, '/');
-                if (findIgnoreMatch(ignorePatterns, entry.name, relPath)) continue;
-                walk(fullPath, rootDir);
-            } else if (entry.isFile() && supportedExtensions.includes(path.extname(entry.name))) {
-                files.push(fullPath);
-            }
-        }
-    }
-
-    for (const dir of directoriesToScan) {
-        const absolute = path.join(workspaceRoot, dir);
-        if (fs.existsSync(absolute) && fs.statSync(absolute).isDirectory()) {
-            walk(absolute, absolute);
-        }
-    }
-
-    return files;
-}
-
-// Re-reads .luaurc and re-reports unresolved alias requires across the workspace.
-// Text for open documents comes from the editor so unsaved edits are reflected.
-//
-// ponytail: re-reads every source file on each call, which is fine at Roblox project scale
-// (hundreds of files) and rides the existing 500ms alias debounce. If this shows up in a
-// profile, cache by mtime.
-function refreshAliasDiagnostics() {
-    if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) return;
-
-    const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
+// Dynamic mode: re-reads .luaurc and reports requires whose alias root is missing.
+function refreshDynamicDiagnostics(workspaceRoot, config, collection) {
     const aliasNames = readAliasNames(workspaceRoot);
     if (!aliasNames) return;
 
-    const config = vscode.workspace.getConfiguration('require-on-rails');
-    const directoriesToScan = config.get('directoriesToScan') || [];
-    const ignorePatterns = compileIgnorePatterns(config.get('ignoreDirectories') || []);
-
-    const collection = getCollection();
     collection.clear();
-
-    const openTexts = new Map();
-    vscode.workspace.textDocuments.forEach(doc => {
-        if (doc.uri.scheme === 'file') openTexts.set(doc.uri.fsPath, doc.getText());
-    });
 
     let totalUnresolved = 0;
     let filesWithIssues = 0;
 
-    for (const filePath of collectSourceFiles(workspaceRoot, directoriesToScan, ignorePatterns)) {
-        let text = openTexts.get(filePath);
-        if (text === undefined) {
-            try {
-                text = fs.readFileSync(filePath, 'utf8');
-            } catch (e) {
-                debug(`aliasDiagnostics: could not read "${filePath}" (${e.message})`);
-                continue;
-            }
-        }
-
+    for (const [filePath, text] of pathResolver.readSourceTexts(workspaceRoot, config)) {
         const unresolved = findUnresolvedAliases(text, aliasNames);
         if (unresolved.length === 0) continue;
 
@@ -199,13 +135,189 @@ function refreshAliasDiagnostics() {
         filesWithIssues++;
     }
 
-    if (totalUnresolved > 0) {
-        warn(`${totalUnresolved} unresolved alias require(s) across ${filesWithIssues} file(s). See the Problems panel.`);
-    } else {
-        debug('aliasDiagnostics: no unresolved alias requires.');
+    return { totalUnresolved, filesWithIssues };
+}
+
+// Explicit mode: full-resolution validation — every require string must land on a real
+// module file (alias root lookup + path walk, ./ ../ resolution, @game via the Rojo
+// mapping). A bare "@name" matching a known module basename is skipped: auto-replace will
+// rewrite it, so flagging it would just flicker while the user types.
+function refreshExplicitDiagnostics(workspaceRoot, config, collection) {
+    const ctx = pathResolver.getContext() || pathResolver.refreshContext();
+    if (!ctx) return;
+
+    collection.clear();
+
+    let totalUnresolved = 0;
+    let filesWithIssues = 0;
+
+    for (const [filePath, text] of pathResolver.readSourceTexts(workspaceRoot, config)) {
+        const fromRel = path.relative(workspaceRoot, filePath).replace(/\\/g, '/');
+        const diagnostics = [];
+
+        for (const found of pathResolver.findRequireStrings(text)) {
+            const spec = found.spec;
+
+            // Bare short name that auto-replace will handle (or that names a real alias).
+            if (spec.startsWith('@') && !spec.includes('/')) {
+                const name = spec.slice(1);
+                if (pathResolver.RESERVED_ALIASES.has(name)) continue;
+                if (ctx.aliases[name] !== undefined) continue;
+                if (ctx.targets[name] && ctx.targets[name].length > 0) continue;
+                diagnostics.push(makeExplicitDiagnostic(found,
+                    `RequireOnRails: "${spec}" matches no known module or alias. ` +
+                    `Check the file exists under require-on-rails.directoriesToScan and is not excluded by ignoreDirectories.`));
+                continue;
+            }
+
+            const resolution = pathResolver.resolveRequire(spec, fromRel, ctx);
+            if (resolution.status === 'unresolved') {
+                diagnostics.push(makeExplicitDiagnostic(found,
+                    `RequireOnRails: "${spec}" does not resolve — ${resolution.message}.`));
+            }
+        }
+
+        if (diagnostics.length === 0) continue;
+        collection.set(vscode.Uri.file(filePath), diagnostics);
+        totalUnresolved += diagnostics.length;
+        filesWithIssues++;
     }
 
     return { totalUnresolved, filesWithIssues };
+}
+
+function makeExplicitDiagnostic(found, message) {
+    const diagnostic = new vscode.Diagnostic(
+        new vscode.Range(
+            new vscode.Position(found.line, found.startColumn),
+            new vscode.Position(found.line, found.endColumn)
+        ),
+        message,
+        vscode.DiagnosticSeverity.Warning
+    );
+    diagnostic.source = 'RequireOnRails';
+    diagnostic.code = 'unresolved-require';
+    return diagnostic;
+}
+
+// Settings that are explicitly set in workspace settings but ignored by the current
+// mode/style get a Warning on .vscode/settings.json. VS Code has no API to conditionally
+// mark a setting invalid, so diagnostics on the settings file are the standard workaround.
+function collectIgnoredSettings() {
+    const mode = getMode();
+    const style = getExplicitPathStyle();
+    const ignored = [];
+
+    if (mode === 'explicit') {
+        const why = 'ignored in explicit mode';
+        ignored.push(
+            { key: 'manualAliases', why: `${why} — alias roots are read from .luaurc, which you maintain yourself` },
+            { key: 'onAliasesRegenerated', why: `${why} — aliases are never regenerated` },
+            { key: 'enableBasenameUpdates', why: `${why} — renames rewrite full paths instead of basenames` },
+            { key: 'enableAbsolutePathUpdates', why: `${why} — renames rewrite full paths instead` },
+            { key: 'enableFileNameCollisionResolution', why: `${why} — duplicate basenames are allowed in explicit mode` }
+        );
+    } else {
+        const why = 'only used in explicit mode';
+        ignored.push(
+            { key: 'explicitPathStyle', why },
+            { key: 'preferRelativePaths', why },
+            { key: 'rojoProjectPath', why }
+        );
+    }
+
+    if (!runtimeModuleRequired()) {
+        const why = `the RequireOnRails Luau module is not used with mode "${mode}" and path style "${style}", so this setting has no effect`;
+        ['tryToAddImportRequire', 'importOpacity', 'importModulePaths', 'contextualImportTemplate', 'preferredImportPlacement']
+            .forEach(key => ignored.push({ key, why }));
+    }
+
+    return ignored;
+}
+
+function refreshSettingsDiagnostics(workspaceRoot, collection) {
+    const settingsPath = path.join(workspaceRoot, '.vscode', 'settings.json');
+    const settingsUri = vscode.Uri.file(settingsPath);
+
+    let text = null;
+    const openDoc = vscode.workspace.textDocuments.find(doc => doc.uri.fsPath === settingsPath);
+    if (openDoc) {
+        text = openDoc.getText();
+    } else if (fs.existsSync(settingsPath)) {
+        try {
+            text = fs.readFileSync(settingsPath, 'utf8');
+        } catch (e) {
+            debug(`aliasDiagnostics: could not read settings.json (${e.message})`);
+        }
+    }
+    if (text === null) {
+        collection.set(settingsUri, []);
+        return;
+    }
+
+    const config = vscode.workspace.getConfiguration('require-on-rails');
+    const diagnostics = [];
+
+    for (const { key, why } of collectIgnoredSettings()) {
+        const inspected = config.inspect(key);
+        // Only workspace-set values can get a squiggle in the workspace settings file.
+        if (!inspected || (inspected.workspaceValue === undefined && inspected.workspaceFolderValue === undefined)) continue;
+
+        // Flat dotted key is how VS Code writes settings; bare key covers hand-nested form.
+        const needle = `"require-on-rails.${key}"`;
+        let index = text.indexOf(needle);
+        let length = needle.length;
+        if (index === -1) {
+            const bare = `"${key}"`;
+            index = text.indexOf(bare);
+            length = bare.length;
+        }
+        if (index === -1) continue;
+
+        const before = text.slice(0, index);
+        const line = (before.match(/\n/g) || []).length;
+        const column = index - (before.lastIndexOf('\n') + 1);
+
+        const diagnostic = new vscode.Diagnostic(
+            new vscode.Range(new vscode.Position(line, column), new vscode.Position(line, column + length)),
+            `RequireOnRails: "${key}" is ${why}.`,
+            vscode.DiagnosticSeverity.Warning
+        );
+        diagnostic.source = 'RequireOnRails';
+        diagnostic.code = 'ignored-setting';
+        diagnostics.push(diagnostic);
+    }
+
+    collection.set(settingsUri, diagnostics);
+}
+
+// Re-reports unresolved requires across the workspace, branching on mode: dynamic checks
+// alias roots against .luaurc, explicit fully resolves every require string. Also flags
+// workspace settings the current mode ignores.
+//
+// ponytail: re-reads every source file on each call, which is fine at Roblox project scale
+// (hundreds of files) and rides the existing 500ms alias debounce. If this shows up in a
+// profile, cache by mtime.
+function refreshAliasDiagnostics() {
+    if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) return;
+
+    const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
+    const config = vscode.workspace.getConfiguration('require-on-rails');
+    const collection = getCollection();
+
+    const result = getMode() === 'explicit'
+        ? refreshExplicitDiagnostics(workspaceRoot, config, collection)
+        : refreshDynamicDiagnostics(workspaceRoot, config, collection);
+
+    refreshSettingsDiagnostics(workspaceRoot, collection);
+
+    if (!result) return result;
+    if (result.totalUnresolved > 0) {
+        warn(`${result.totalUnresolved} unresolved require(s) across ${result.filesWithIssues} file(s). See the Problems panel.`);
+    } else {
+        debug('aliasDiagnostics: no unresolved requires.');
+    }
+    return result;
 }
 
 module.exports = {

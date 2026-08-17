@@ -20,6 +20,9 @@ const { downloadLuauModule } = require('./commands/downloadLuauModule');
 const { addImportToAllFiles } = require('./features/addImportToFiles');
 const { setOutputChannel, print, warn, error, debug } = require('./core/logger');
 const { checkForPackageUpdatesWithSkip, checkForPackageUpdates } = require('./features/packageUpdateChecker');
+const { getMode, runtimeModuleRequired } = require('./utils/workspaceUtils');
+const pathResolver = require('./features/pathResolver');
+const explicitMode = require('./features/explicitMode');
 
 let isActive = false;
 let statusBarItem;
@@ -63,6 +66,23 @@ function enableWatchers() {
         print('settings.jsonc changed, regenerating aliases...');
         debouncedGenerateFileAliases();
     });
+
+    // Explicit mode reads .luaurc (user-maintained) and the Rojo project instead of writing
+    // them, so edits to either must refresh the resolver context. NOT watched in dynamic
+    // mode: the extension writes .luaurc there, which would create a feedback loop.
+    if (getMode() === 'explicit') {
+        createWatcher('**/.luaurc', true, () => {
+            print('.luaurc changed, refreshing module index...');
+            debouncedGenerateFileAliases();
+        });
+        const rojoProjectPath = vscode.workspace.getConfiguration('require-on-rails').get('rojoProjectPath', 'default.project.json');
+        if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
+            createWatcher(new vscode.RelativePattern(vscode.workspace.workspaceFolders[0], rojoProjectPath), true, () => {
+                print('Rojo project changed, refreshing module index...');
+                debouncedGenerateFileAliases();
+            });
+        }
+    }
 }
 
 function disableWatchers() {
@@ -73,36 +93,45 @@ function disableWatchers() {
 // --- Event Listener Management ---
 
 function enableEventListeners() {
-    // Listen for active editor changes to hide lines in Luau files
-    const textEditorListener = vscode.window.onDidChangeActiveTextEditor((editor) => {
-        if (editor && (editor.document.languageId === 'luau' || editor.document.languageId === 'lua')) {
-            hideLines(editor);
-        }
-    });
-    eventListenerDisposables.push(textEditorListener);
-
-    // Listen for document changes to hide lines in Luau files
-    const textDocumentListener = vscode.workspace.onDidChangeTextDocument((event) => {
-        const editor = vscode.window.activeTextEditor;
-        if (editor && editor.document === event.document && 
-            (editor.document.languageId === 'luau' || editor.document.languageId === 'lua')) {
-            // Use a small delay to ensure the document has been fully updated
-            setTimeout(() => {
+    // The import-block UI (insertion prompts + dimming) only makes sense when the runtime
+    // Luau module is in play: dynamic mode, or explicit mode with alias-rooted paths.
+    if (runtimeModuleRequired()) {
+        // Listen for active editor changes to hide lines in Luau files
+        const textEditorListener = vscode.window.onDidChangeActiveTextEditor((editor) => {
+            if (editor && (editor.document.languageId === 'luau' || editor.document.languageId === 'lua')) {
                 hideLines(editor);
-            }, 10);
-        }
-    });
-    eventListenerDisposables.push(textDocumentListener);
+            }
+        });
+        eventListenerDisposables.push(textEditorListener);
 
-    // Listen for when documents are opened to apply decorations
-    const documentOpenListener = vscode.workspace.onDidOpenTextDocument((document) => {
-        const editor = vscode.window.activeTextEditor;
-        if (editor && editor.document === document && 
-            (document.languageId === 'luau' || document.languageId === 'lua')) {
-            hideLines(editor);
-        }
-    });
-    eventListenerDisposables.push(documentOpenListener);
+        // Listen for document changes to hide lines in Luau files
+        const textDocumentListener = vscode.workspace.onDidChangeTextDocument((event) => {
+            const editor = vscode.window.activeTextEditor;
+            if (editor && editor.document === event.document &&
+                (editor.document.languageId === 'luau' || editor.document.languageId === 'lua')) {
+                // Use a small delay to ensure the document has been fully updated
+                setTimeout(() => {
+                    hideLines(editor);
+                }, 10);
+            }
+        });
+        eventListenerDisposables.push(textDocumentListener);
+
+        // Listen for when documents are opened to apply decorations
+        const documentOpenListener = vscode.workspace.onDidOpenTextDocument((document) => {
+            const editor = vscode.window.activeTextEditor;
+            if (editor && editor.document === document &&
+                (document.languageId === 'luau' || document.languageId === 'lua')) {
+                hideLines(editor);
+            }
+        });
+        eventListenerDisposables.push(documentOpenListener);
+    }
+
+    // Completion, auto-replace, and the on-save sweep only exist in explicit mode.
+    if (getMode() === 'explicit') {
+        eventListenerDisposables.push(...explicitMode.registerExplicitFeatures());
+    }
 
     // Alias *requires* live in file contents, but the .lua/.luau watchers deliberately ignore
     // change events (contents cannot change the alias set), so a save is the only signal that
@@ -113,12 +142,16 @@ function enableEventListeners() {
     });
     eventListenerDisposables.push(saveListener);
 
-    // Listen for file renames (future: update require names)
+    // Listen for file renames to update require statements
     const renameListener = vscode.workspace.onDidRenameFiles((event) => {
-        event.files.forEach((file) => {
-            //print(`File renamed from ${file.oldUri.fsPath} to ${file.newUri.fsPath}`);
-            updateRequireNames(file.newUri.fsPath, file.oldUri.fsPath);
-        });
+        if (getMode() === 'explicit') {
+            // Full-path rewrites: inbound requires prompted, outbound relative fixed.
+            explicitMode.handleRenameEventExplicit(event.files);
+        } else {
+            event.files.forEach((file) => {
+                updateRequireNames(file.newUri.fsPath, file.oldUri.fsPath);
+            });
+        }
         // Renaming a *folder* only emits watcher events for the folder path, which matches
         // neither **/*.luau nor **/*.lua, so the watchers never fire. A folder holding an
         // init file owns an alias named after the folder, and every file under a renamed
@@ -203,13 +236,26 @@ let debouncePending = false;
 let isGeneratingAliases = false;
 const CONTEXTUAL_IMPORT_PLACEHOLDER = '{IMPORT_MODULE_PATH}';
 
-// Settings that change the generated alias set, and so must trigger a regeneration.
-const ALIAS_CONFIG_KEYS = ['directoriesToScan', 'ignoreDirectories', 'pathPriority', 'manualAliases'];
+// Settings that change the generated alias set (dynamic) or the module index (explicit),
+// and so must trigger a regeneration.
+const ALIAS_CONFIG_KEYS = ['directoriesToScan', 'ignoreDirectories', 'pathPriority', 'manualAliases', 'preferRelativePaths', 'rojoProjectPath'];
+
+// Settings that change which watchers/listeners/providers should exist, requiring a full
+// feature rewire rather than just a regeneration.
+const REWIRE_CONFIG_KEYS = ['mode', 'explicitPathStyle'];
 
 // Every regeneration path goes through here, so alias diagnostics can never drift out of sync
-// with the .luaurc that was just written. generateFileAliases returns undefined when it bails
-// early (no workspace folder, unparseable .luaurc), in which case there is nothing to report on.
+// with what was just computed. Dynamic mode writes .luaurc; explicit mode NEVER touches it and
+// rebuilds the in-memory module index instead. generateFileAliases returns undefined when it
+// bails early (no workspace folder, unparseable .luaurc).
 function regenerateAliasesAndDiagnostics() {
+    if (getMode() === 'explicit') {
+        const ctx = pathResolver.refreshContext();
+        if (!ctx) return;
+        refreshAliasDiagnostics();
+        return { aliases: {}, ambiguousAliases: {} };
+    }
+
     const result = generateFileAliases();
     if (!result) return result;
 
@@ -278,6 +324,21 @@ function activate(context) {
             validateContextualImportTemplate(updatedTemplate, true);
         }
 
+        // Mode/style changes swap which watchers, listeners, and providers should exist,
+        // so tear everything down and bring it back up under the new configuration.
+        const changedRewireSetting = REWIRE_CONFIG_KEYS.find(key =>
+            event.affectsConfiguration(`require-on-rails.${key}`)
+        );
+        if (changedRewireSetting) {
+            pathResolver.invalidateContext();
+            if (isActive) {
+                debug(`Setting "require-on-rails.${changedRewireSetting}" changed; rewiring extension features.`);
+                disableExtensionFeatures();
+                enableExtensionFeatures();
+            }
+            return;
+        }
+
         // The settings.json watcher only catches workspace-file edits, so global-scope changes
         // to these would otherwise never take effect until the next file change.
         const changedAliasSetting = ALIAS_CONFIG_KEYS.find(key =>
@@ -315,22 +376,66 @@ function activate(context) {
 
     // Register commands using helper function
     registerCommand(context, 'require-on-rails.openMenu', async () => {
+        // Entries irrelevant to the current mode/style are hidden rather than disabled:
+        // alias lifecycle actions are dynamic-only, import-block actions need the runtime
+        // module, and explicit-path actions only exist in explicit mode.
+        const mode = getMode();
+        const isExplicit = mode === 'explicit';
         const items = [
             isActive
                 ? { label: '$(circle-slash) Deactivate', description: 'Turn off RequireOnRails features', command: 'require-on-rails.toggleActive' }
                 : { label: '$(play) Activate', description: 'Turn on RequireOnRails features', command: 'require-on-rails.toggleActive' },
-            { label: '$(sync) Regenerate Aliases', description: 'Force alias regeneration and show the log', command: 'require-on-rails.regenerateAliases' },
-            { label: '$(cloud-download) Download Luau Module', description: 'Get the RequireOnRails Luau module', command: 'require-on-rails.downloadLuauModule' },
+            { label: `$(arrow-swap) Switch Mode (current: ${mode})`, description: 'Choose dynamic alias generation or explicit path writing', command: 'require-on-rails.selectMode' },
+            isExplicit
+                ? { label: '$(sync) Rescan Modules', description: 'Refresh the module index and diagnostics, and show the log', command: 'require-on-rails.regenerateAliases' }
+                : { label: '$(sync) Regenerate Aliases', description: 'Force alias regeneration and show the log', command: 'require-on-rails.regenerateAliases' },
+            isExplicit
+                ? { label: '$(replace-all) Rewrite All Requires to Current Style', description: 'Re-render every resolvable require string', command: 'require-on-rails.rewriteAllRequires' }
+                : null,
+            runtimeModuleRequired()
+                ? { label: '$(cloud-download) Download Luau Module', description: 'Get the RequireOnRails Luau module', command: 'require-on-rails.downloadLuauModule' }
+                : null,
             { label: '$(new-folder) Setup Default Project Structure', description: 'Unpack the starter project template', command: 'require-on-rails.setupDefaultProject' },
-            { label: '$(edit) Add Import Definition to All Files', description: 'Insert the import require def where missing', command: 'require-on-rails.addImportToAllFiles' },
-            { label: '$(terminal) Manage Alias Regeneration Commands', description: 'Approve or revoke workspace onAliasesRegenerated commands', command: 'require-on-rails.manageAliasCommands' },
+            runtimeModuleRequired()
+                ? { label: '$(edit) Add Import Definition to All Files', description: 'Insert the import require def where missing', command: 'require-on-rails.addImportToAllFiles' }
+                : null,
+            !isExplicit
+                ? { label: '$(terminal) Manage Alias Regeneration Commands', description: 'Approve or revoke workspace onAliasesRegenerated commands', command: 'require-on-rails.manageAliasCommands' }
+                : null,
             { label: '$(gear) Open Extension Settings', description: 'Open RequireOnRails settings', command: 'workbench.action.openSettings', args: 'require-on-rails' },
             { label: '$(arrow-up) Check for Updates', description: 'Check for RequireOnRails package updates', command: 'require-on-rails.checkForUpdates' },
-        ];
-        const pick = await vscode.window.showQuickPick(items, { placeHolder: 'RequireOnRails' });
+        ].filter(Boolean);
+        const pick = await vscode.window.showQuickPick(items, { placeHolder: `RequireOnRails (${mode} mode)` });
         if (pick) {
             vscode.commands.executeCommand(pick.command, pick.args);
         }
+    });
+
+    registerCommand(context, 'require-on-rails.selectMode', async () => {
+        const current = getMode();
+        const pick = await vscode.window.showQuickPick([
+            {
+                label: 'dynamic',
+                description: (current === 'dynamic' ? '(current) ' : '') + 'Generate basename aliases into .luaurc, resolved at runtime by the Luau module'
+            },
+            {
+                label: 'explicit',
+                description: (current === 'explicit' ? '(current) ' : '') + 'Write full require paths into your source at edit time; .luaurc is yours to maintain'
+            }
+        ], { placeHolder: `How should requires be resolved? (current: ${current})` });
+        if (!pick || pick.label === current) return;
+        await vscode.workspace.getConfiguration('require-on-rails')
+            .update('mode', pick.label, vscode.ConfigurationTarget.Workspace);
+        // The configuration listener performs the rewire; just confirm.
+        vscode.window.showInformationMessage(`RequireOnRails: switched to ${pick.label} mode for this workspace.`);
+    });
+
+    registerCommand(context, 'require-on-rails.rewriteAllRequires', () => {
+        if (getMode() !== 'explicit') {
+            vscode.window.showInformationMessage('RequireOnRails: "Rewrite All Requires" is an explicit-mode action. Switch mode first (RequireOnRails: Select Mode).');
+            return;
+        }
+        explicitMode.rewriteAllRequires();
     });
 
     registerCommand(context, 'require-on-rails.toggleActive', () => {
@@ -346,10 +451,18 @@ function activate(context) {
     });
 
     registerCommand(context, 'require-on-rails.downloadLuauModule', () => {
+        if (!runtimeModuleRequired()) {
+            vscode.window.showInformationMessage('RequireOnRails: the Luau module is not needed with the current mode/path style — Roblox resolves these require paths natively.');
+            return;
+        }
         downloadLuauModule(context);
     });
 
     registerCommand(context, 'require-on-rails.addImportToAllFiles', () => {
+        if (!runtimeModuleRequired()) {
+            vscode.window.showInformationMessage('RequireOnRails: the import block is not needed with the current mode/path style — Roblox resolves these require paths natively.');
+            return;
+        }
         addImportToAllFiles();
     });
 
@@ -432,6 +545,28 @@ function activate(context) {
             disposeAliasDiagnostics();
         }
     });
+
+    // First activation in a workspace: ask which mode to use and store the answer in
+    // workspace settings. Dismissal writes nothing — behavior stays dynamic (the setting's
+    // default) and the choice is re-offered next activation and via the menu.
+    const modeInspection = config.inspect('mode') || {};
+    const hasModeChoice = modeInspection.workspaceValue !== undefined
+        || modeInspection.workspaceFolderValue !== undefined
+        || modeInspection.globalValue !== undefined;
+    if (!hasModeChoice && vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
+        const dynamicChoice = 'Dynamic (aliases + runtime module)';
+        const explicitChoice = 'Explicit (full paths)';
+        vscode.window.showInformationMessage(
+            'RequireOnRails: how should requires be resolved in this workspace?',
+            dynamicChoice,
+            explicitChoice
+        ).then(choice => {
+            if (!choice) return;
+            const mode = choice === explicitChoice ? 'explicit' : 'dynamic';
+            return vscode.workspace.getConfiguration('require-on-rails')
+                .update('mode', mode, vscode.ConfigurationTarget.Workspace);
+        });
+    }
 
     if (config.get("startsImmediately") && vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
         print('RequireOnRails is starting immediately as per configuration.');
