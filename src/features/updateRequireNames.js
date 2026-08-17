@@ -6,6 +6,8 @@ const { print, warn } = require('../core/logger');
 const requirePrefix = '@';
 const supportedExtensions = ['.lua', '.luau'];
 
+/** @typedef {'renamed' | 'moved' | 'moved and renamed'} OperationType */
+
 /**
  * Helper function to check if directory should be ignored based on regex patterns.
  * 
@@ -84,7 +86,13 @@ function updateRequireNames(newFilePath, oldFilePath) {
  * 
  * @param {string} newFilePath - The new file path
  * @param {string} oldFilePath - The original file path
- * @returns {Object|null} Operation info object with properties:
+ * @returns {{
+ *   operationType: OperationType,
+ *   isMove: boolean,
+ *   isRename: boolean,
+ *   oldFileBasename: string,
+ *   newFileBasename: string
+ * } | null} Operation info object with properties:
  *   - operationType: 'renamed', 'moved', or 'moved and renamed'
  *   - isMove: boolean indicating if directories changed
  *   - isRename: boolean indicating if filename changed
@@ -101,6 +109,7 @@ function analyzeFileOperation(newFilePath, oldFilePath) {
     const isMove = oldDir !== newDir;
     const isRename = oldFileName !== newFileName;
     
+    /** @type {OperationType} */
     let operationType;
     if (isMove && isRename) {
         operationType = 'moved and renamed';
@@ -126,19 +135,23 @@ function analyzeFileOperation(newFilePath, oldFilePath) {
  * @param {string} newFilePath - The new file path to check for collisions
  * @param {string} newFileBasename - The basename of the new file
  * @param {string} workspaceRoot - Root directory of the workspace
- * @returns {Object} Result object with properties:
+ * @returns {{ renamed: boolean, newFilePath: string, newFileBasename: string }} Result object with properties:
  *   - renamed: boolean indicating if file was renamed due to collision
  *   - newFilePath: updated file path (may be changed if collision)
  *   - newFileBasename: updated basename (may be changed if collision)
  */
 function handleFilenameCollision(newFilePath, newFileBasename, workspaceRoot) {
     const config = vscode.workspace.getConfiguration('require-on-rails');
-    const directoriesToScan = config.get('directoriesToScan');
-    const ignoreDirectories = config.get('ignoreDirectories');
+    const directoriesToScan = /** @type {string[]} */ (config.get('directoriesToScan'));
+    const ignoreDirectories = /** @type {string[]} */ (config.get('ignoreDirectories'));
     
     const scanRoots = directoriesToScan.map(dir => path.join(workspaceRoot, dir));
 
     // Check for filename collision
+    /**
+     * @param {string} dir - Directory to scan for a conflicting name
+     * @returns {boolean} True if a colliding file or init module exists
+     */
     function checkForCollision(dir) {
         const files = fs.readdirSync(dir);
         for (const file of files) {
@@ -222,8 +235,8 @@ function handleBasenameRequireUpdates(operationType, oldFileBasename, newFileBas
  */
 function updateBasenameRequiresInFiles(oldFileBasename, newFileBasename, workspaceRoot) {
     const config = vscode.workspace.getConfiguration('require-on-rails');
-    const directoriesToScan = config.get('directoriesToScan');
-    const ignoreDirectories = config.get('ignoreDirectories');
+    const directoriesToScan = /** @type {string[]} */ (config.get('directoriesToScan'));
+    const ignoreDirectories = /** @type {string[]} */ (config.get('ignoreDirectories'));
     
     const scanRoots = directoriesToScan.map(dir => path.join(workspaceRoot, dir));
 
@@ -341,8 +354,8 @@ function handleAbsolutePathUpdates(newFilePath, oldFilePath, workspaceRoot) {
  */
 function updateAbsoluteRequireInFiles(oldAbsolutePath, newAbsolutePath, workspaceRoot) {
     const config = vscode.workspace.getConfiguration('require-on-rails');
-    const directoriesToScan = config.get('directoriesToScan');
-    const ignoreDirectories = config.get('ignoreDirectories');
+    const directoriesToScan = /** @type {string[]} */ (config.get('directoriesToScan'));
+    const ignoreDirectories = /** @type {string[]} */ (config.get('ignoreDirectories'));
     
     /**
      * Updates absolute require statements in a single file.
@@ -376,7 +389,7 @@ function updateAbsoluteRequireInFiles(oldAbsolutePath, newAbsolutePath, workspac
         for (const file of files) {
             const fullPath = path.join(directory, file);
             if (fs.statSync(fullPath).isDirectory()) {
-                if (shouldIgnoreDirectory(path.basename(fullPath), ignoreDirectories)) return;
+                if (shouldIgnoreDirectory(path.basename(fullPath), ignoreDirectories)) continue;
                 processDirectory(fullPath);
             } else if (supportedExtensions.includes(path.extname(file))) {
                 updateAbsoluteRequiresInFile(fullPath);

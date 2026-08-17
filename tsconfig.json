@@ -7,8 +7,8 @@
     "checkJs": true,
     "noEmit": true,
     "strict": true,
-    "noImplicitAny": false,
-    "useUnknownInCatchVariables": false,
+    "noImplicitAny": true,
+    "useUnknownInCatchVariables": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true

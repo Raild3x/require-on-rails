@@ -25,22 +25,32 @@ const pathResolver = require('./features/pathResolver');
 const explicitMode = require('./features/explicitMode');
 
 let isActive = false;
+/** @type {import('vscode').StatusBarItem | undefined} */
 let statusBarItem;
+/** @type {import('vscode').StatusBarItem | undefined} */
 let toggleStatusBarItem;
+/** @type {import('vscode').LogOutputChannel} */
 let outputChannel;
 
 //----------------------------------------------------------------------------------------------
 
 // Store watcher disposables for enable/disable
+/** @type {import('vscode').Disposable[]} */
 let watcherDisposables = [];
 
 // Store event listener disposables for enable/disable
+/** @type {import('vscode').Disposable[]} */
 let eventListenerDisposables = [];
 
 // --- Watcher Management ---
 
 function enableWatchers() {
     // Helper to create a watcher for a glob pattern and hook up all events to the same handler
+    /**
+     * @param {import('vscode').GlobPattern} glob
+     * @param {boolean} onChange
+     * @param {(uri: import('vscode').Uri) => void} handler
+     */
     function createWatcher(glob, onChange, handler) {
         print(`Creating watcher for glob: ${glob}`);
         const watcher = vscode.workspace.createFileSystemWatcher(glob);
@@ -224,6 +234,11 @@ function toggleExtension() {
 }
 
 // Helper function to register commands
+/**
+ * @param {import('vscode').ExtensionContext} context
+ * @param {string} commandId
+ * @param {Parameters<typeof vscode.commands.registerCommand>[1]} handler
+ */
 function registerCommand(context, commandId, handler) {
     const command = vscode.commands.registerCommand(commandId, handler);
     context.subscriptions.push(command);
@@ -231,6 +246,7 @@ function registerCommand(context, commandId, handler) {
 }
 
 // Debounce utility (shared instance for all watchers)
+/** @type {ReturnType<typeof setTimeout> | null} */
 let debounceTimer = null;
 let debouncePending = false;
 let isGeneratingAliases = false;
@@ -283,6 +299,10 @@ function debouncedGenerateFileAliases() {
     }, 500);
 }
 
+/**
+ * @param {unknown} template
+ * @param {boolean} [showWarning]
+ */
 function validateContextualImportTemplate(template, showWarning = true) {
     const isValid =
         typeof template === 'string' &&
@@ -297,6 +317,7 @@ function validateContextualImportTemplate(template, showWarning = true) {
     return isValid;
 }
 
+/** @param {import('vscode').ExtensionContext} context */
 function activate(context) {
     // Start from a known-inactive state with nothing left registered. VS Code activates an
     // extension once per host, so in production this is a no-op — but activate() must not

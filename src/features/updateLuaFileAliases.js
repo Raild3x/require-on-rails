@@ -12,15 +12,41 @@ const { print, warn, error, debug, trace, showOutputChannel } = require('../core
 const extenionName = 'require-on-rails';
 const supportedExtensions = ['.lua', '.luau'];
 
-// Per-run counters, reset at the top of generateFileAliases and reported in its summary.
-let stats = null;
+/**
+ * One candidate file for a given basename.
+ * @typedef {{ path: string }} AliasCandidate
+ *
+ * Basename -> every file that could claim that alias.
+ * @typedef {Object<string, AliasCandidate[]>} BasenameMap
+ *
+ * An ignoreDirectories entry, compiled once per run. `regex` is null when the
+ * pattern failed to compile, in which case matching falls back to `source`.
+ * @typedef {{ pattern: string, source: string, regex: RegExp | null, subjectKind: string }} CompiledIgnorePattern
+ *
+ * Per-run scan counters.
+ * @typedef {{ dirsScanned: number, dirsPruned: number, filesSeen: number, filesAdded: number, filesRejected: number }} ScanStats
+ */
 
-// Helper function to get the absolute path of a directory or file
+// Per-run counters, reset at the top of buildBasenameMap and reported in its summary.
+/** @type {ScanStats} */
+let stats = { dirsScanned: 0, dirsPruned: 0, filesSeen: 0, filesAdded: 0, filesRejected: 0 };
+
+/**
+ * Helper function to get the absolute path of a directory or file
+ * @param {string} workspaceRoot
+ * @param {string} filePath
+ * @returns {string}
+ */
 function getDirPath(workspaceRoot, filePath) {
     return path.join(workspaceRoot, filePath);
 }
 
-// Workspace-root-relative, forward-slashed path. Used both for alias values and log messages.
+/**
+ * Workspace-root-relative, forward-slashed path. Used both for alias values and log messages.
+ * @param {string} filePath
+ * @param {string} workspaceRoot
+ * @returns {string}
+ */
 function toAliasPath(filePath, workspaceRoot) {
     return path.relative(workspaceRoot, filePath).replace(/\\/g, '/');
 }
@@ -29,6 +55,10 @@ function toAliasPath(filePath, workspaceRoot) {
 // is not rebuilt for every directory visited.
 // Patterns containing path separators ('/' or '\\') are matched against the workspace-root-relative
 // path; all others are matched against the bare directory name.
+/**
+ * @param {string[]} patterns
+ * @returns {CompiledIgnorePattern[]}
+ */
 function compileIgnorePatterns(patterns) {
     return patterns.map(pattern => {
         const isPathPattern = pattern.includes('/') || pattern.includes('\\');
@@ -44,6 +74,12 @@ function compileIgnorePatterns(patterns) {
 }
 
 // Returns the first compiled pattern that matches this directory, or null.
+/**
+ * @param {CompiledIgnorePattern[]} compiledPatterns
+ * @param {string} dirName
+ * @param {string} relPath
+ * @returns {(CompiledIgnorePattern & { subject: string }) | null}
+ */
 function findIgnoreMatch(compiledPatterns, dirName, relPath) {
     for (const compiled of compiledPatterns) {
         const subject = compiled.subjectKind === 'path' ? relPath : dirName;
@@ -57,6 +93,13 @@ function findIgnoreMatch(compiledPatterns, dirName, relPath) {
 
 // Helper to check if the file is located under a directory that matches any ignore pattern.
 // Returns the matching pattern (for logging) or null.
+/**
+ * @param {string} filePath
+ * @param {string} rootDir
+ * @param {string} workspaceRoot
+ * @param {CompiledIgnorePattern[]} compiledPatterns
+ * @returns {(CompiledIgnorePattern & { subject: string, dir: string }) | null}
+ */
 function findIgnoredAncestor(filePath, rootDir, workspaceRoot, compiledPatterns) {
     let currentDir = path.dirname(filePath);
     while (currentDir !== rootDir) {
@@ -73,12 +116,22 @@ function findIgnoredAncestor(filePath, rootDir, workspaceRoot, compiledPatterns)
 
 // Helper function to check if a file should be ignored.
 // Returns the offending substring (for logging) or null.
+/**
+ * @param {string} fileName
+ * @param {string[]} ignoreList
+ * @returns {string | null}
+ */
 function findIgnoredFileSubstring(fileName, ignoreList) {
     return ignoreList.find(substring => fileName.includes(substring)) || null;
 }
 
 // Resolve ambiguous basename candidates using ordered path-priority prefixes.
 // Returns a resolved path only when exactly one candidate matches the highest-priority matched prefix.
+/**
+ * @param {AliasCandidate[]} candidates
+ * @param {string[]} pathPriority
+ * @returns {{ resolvedPath?: string, priorityPrefix?: string, triedPrefixes?: string[], ambiguous?: boolean, matchCount?: number, noPrefixMatched?: boolean } | null}
+ */
 function resolveAmbiguousAliasByPathPriority(candidates, pathPriority) {
     if (!Array.isArray(pathPriority) || pathPriority.length === 0) {
         return null;
@@ -106,6 +159,16 @@ function resolveAmbiguousAliasByPathPriority(candidates, pathPriority) {
 
 
 // Recursive function to scan a directory and collect files by basename
+/**
+ * @param {string} dir
+ * @param {string} rootDir
+ * @param {string[]} supportedExtensions
+ * @param {CompiledIgnorePattern[]} ignorePatterns
+ * @param {string[]} ignoreList
+ * @param {BasenameMap} basenameMap
+ * @param {string} workspaceRoot
+ * @returns {void}
+ */
 function scanDir(dir, rootDir, supportedExtensions, ignorePatterns, ignoreList, basenameMap, workspaceRoot) {
     const relDir = toAliasPath(dir, workspaceRoot);
 
@@ -203,8 +266,13 @@ function scanDir(dir, rootDir, supportedExtensions, ignorePatterns, ignoreList, 
 // Only one batch of commands runs at a time; if another regeneration fires while commands
 // are in-flight, the latest request is queued (previous pending run is dropped).
 let _commandsInFlight = false;
-let _pendingRun = null; // { commands: string[], workspaceRoot: string } | null
+/** @type {{ commands: string[], workspaceRoot: string } | null} */
+let _pendingRun = null;
 
+/**
+ * @param {string[]} commands
+ * @param {string} workspaceRoot
+ */
 function _runCommandsSerial(commands, workspaceRoot) {
     let index = 0;
     function runNext() {
@@ -228,6 +296,10 @@ function _runCommandsSerial(commands, workspaceRoot) {
     runNext();
 }
 
+/**
+ * @param {string[]} commands
+ * @param {string} workspaceRoot
+ */
 function _scheduleAliasCommands(commands, workspaceRoot) {
     if (_commandsInFlight) {
         _pendingRun = { commands, workspaceRoot };
@@ -236,6 +308,10 @@ function _scheduleAliasCommands(commands, workspaceRoot) {
     _runCommandsSerial(commands, workspaceRoot);
 }
 
+/**
+ * @param {unknown} value
+ * @returns {string[]}
+ */
 function toCommandList(value) {
     return Array.isArray(value) ? value.filter(c => typeof c === 'string' && c.length > 0) : [];
 }
@@ -245,8 +321,14 @@ function toCommandList(value) {
 // here rather than with `"scope": "machine"` in package.json, because VS Code strips
 // machine-scoped values out of the workspace configuration before `inspect()` can see them,
 // and we need to see them in order to tell the user what the workspace was asking for.
+/**
+ * @param {import('vscode').WorkspaceConfiguration} config
+ * @returns {{ userCommands: string[], workspaceCommands: string[] }}
+ */
 function getAliasCommands(config) {
-    const inspected = config.inspect('onAliasesRegenerated') || {};
+    const inspected = /** @type {{ globalValue?: unknown, workspaceValue?: unknown, workspaceFolderValue?: unknown }} */ (
+        config.inspect('onAliasesRegenerated') || {}
+    );
     return {
         userCommands: toCommandList(inspected.globalValue),
         workspaceCommands: toCommandList(inspected.workspaceFolderValue ?? inspected.workspaceValue)
@@ -264,13 +346,18 @@ function getAliasCommands(config) {
 // editing a command in the repository invalidates the approval and re-prompts.
 const APPROVED_COMMANDS_KEY = 'approvedAliasCommands';
 
+/** @type {import('vscode').ExtensionContext | null} */
 let _extensionContext = null;
 
+/**
+ * @param {import('vscode').ExtensionContext} context
+ */
 function setExtensionContext(context) {
     _extensionContext = context;
 }
 
 // No usable workspace state means no stored approvals, so nothing extra is allowed to run.
+/** @returns {import('vscode').Memento | null} */
 function getWorkspaceState() {
     return _extensionContext && _extensionContext.workspaceState
         ? _extensionContext.workspaceState
@@ -282,6 +369,10 @@ function getApprovedCommands() {
     return state ? toCommandList(state.get(APPROVED_COMMANDS_KEY)) : [];
 }
 
+/**
+ * @param {string[]} commands
+ * @returns {Promise<void>}
+ */
 function approveCommandsForWorkspace(commands) {
     const state = getWorkspaceState();
     if (!state) return Promise.reject(new Error('No workspace state available to store the approval'));
@@ -293,6 +384,9 @@ function approveCommandsForWorkspace(commands) {
 // Announced once per distinct set per session, since alias regeneration runs on every file change.
 const _announcedWorkspaceCommands = new Set();
 
+/**
+ * @param {string[]} pending
+ */
 function announceWorkspaceCommands(pending) {
     const signature = JSON.stringify(pending);
     if (_announcedWorkspaceCommands.has(signature)) return;
@@ -355,6 +449,10 @@ function getAliasCommandApprovalState() {
 // picker shows every workspace command with its current state, so what comes back is the whole
 // answer, and deselecting is how a command is revoked. Clearing the announcement cache lets a
 // revoked command warn again on the next regeneration instead of staying silently ignored.
+/**
+ * @param {string[]} commands
+ * @returns {Promise<void>}
+ */
 function setApprovedCommands(commands) {
     const state = getWorkspaceState();
     if (!state) return Promise.reject(new Error('No workspace state available to store the approval'));
@@ -367,6 +465,7 @@ function setApprovedCommands(commands) {
 // notification is tied to *what* is ambiguous rather than to each run. Storing the last
 // announced set (instead of every set ever seen) means clearing an ambiguity and reintroducing
 // it warns again, while an unchanged ambiguity stays quiet.
+/** @type {string | null} */
 let _lastAmbiguousSignature = null;
 
 function resetAmbiguityNotificationState() {
@@ -376,6 +475,9 @@ function resetAmbiguityNotificationState() {
 // Deliberately a non-modal warning: warnings persist in the notification area until the user
 // dismisses them, so it still needs acknowledging, but it cannot stack up a modal dialog on a
 // hot path that runs after every file change.
+/**
+ * @param {Object<string, string[]>} ambiguousAliases
+ */
 function announceAmbiguousAliases(ambiguousAliases) {
     const names = Object.keys(ambiguousAliases).sort();
     const signature = JSON.stringify(names);
@@ -419,6 +521,7 @@ function announceAmbiguousAliases(ambiguousAliases) {
 /**
  * @param {string} workspaceRoot
  * @param {{directoriesToScan?: string[], ignoreDirectories?: string[]}} [options]
+ * @returns {{ basenameMap: BasenameMap, rootDirs: string[] }}
  */
 function buildBasenameMap(workspaceRoot, { directoriesToScan = [], ignoreDirectories = [] } = {}) {
     const ignoreList = ['.server', '.client'];
@@ -432,6 +535,7 @@ function buildBasenameMap(workspaceRoot, { directoriesToScan = [], ignoreDirecto
 
     // Resolve scan roots. A configured root that does not exist is almost always a typo,
     // so it warns rather than disappearing silently.
+    /** @type {string[]} */
     const rootDirs = [];
     for (const dir of directoriesToScan) {
         const absolute = getDirPath(workspaceRoot, dir);
@@ -448,6 +552,7 @@ function buildBasenameMap(workspaceRoot, { directoriesToScan = [], ignoreDirecto
     const ignorePatterns = compileIgnorePatterns(ignoreDirectories);
 
     // Map of basename -> array of { path }
+    /** @type {BasenameMap} */
     const basenameMap = {};
     rootDirs.forEach(rootDir => {
         print(`Scanning directory: ${rootDir}`);
@@ -467,11 +572,13 @@ function buildBasenameMap(workspaceRoot, { directoriesToScan = [], ignoreDirecto
 // Pure, so that dynamic mode's .luaurc write and the CI checker's read-only report derive the
 // same "generated alias set" from the same rules.
 /**
- * @param {object} basenameMap
+ * @param {BasenameMap} basenameMap
  * @param {{pathPriority?: string[], manualAliases?: Object<string, string>}} [options]
+ * @returns {{ aliases: Object<string, string>, ambiguousAliases: Object<string, string[]>, shadowedByManual: number }}
  */
 function classifyBasenames(basenameMap, { pathPriority = [], manualAliases = {} } = {}) {
     // Merge manual and auto-generated aliases, manual takes precedence
+    /** @type {Object<string, string>} */
     const compiledAliases = {};
 
     // Add manual aliases from VS Code settings (these take precedence)
@@ -481,8 +588,10 @@ function classifyBasenames(basenameMap, { pathPriority = [], manualAliases = {} 
 
     // Ambiguous aliases (multiple files with the same basename), mapped to the conflicting
     // paths so both the notification and the Problems-panel diagnostics can name them.
+    /** @type {Object<string, string[]>} */
     const ambiguousAliases = {};
     // Track which aliases are unique (only one file with that basename)
+    /** @type {Object<string, string>} */
     const uniqueAliases = {};
     for (const [basename, arr] of Object.entries(basenameMap)) {
         if (arr.length === 1) {
@@ -538,15 +647,15 @@ function generateFileAliases() {
 
     const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
 
-    const rawPathPriority = config.get('pathPriority', []);
+    const rawPathPriority = /** @type {string[]} */ (config.get('pathPriority', []));
     const pathPriority = Array.isArray(rawPathPriority) ? rawPathPriority : [];
     const inspectedManualAliases = config.inspect('manualAliases');
-    const manualAliases = (inspectedManualAliases
+    const manualAliases = /** @type {Object<string, string>} */ ((inspectedManualAliases
         ? (inspectedManualAliases.workspaceFolderValue
             ?? inspectedManualAliases.workspaceValue
             ?? inspectedManualAliases.globalValue
             ?? inspectedManualAliases.defaultValue)
-        : null) ?? {};
+        : null) ?? {});
     const luaurcPath = getDirPath(workspaceRoot, '.luaurc');
 
     debug(`--- Alias generation started ---`);
@@ -568,8 +677,8 @@ function generateFileAliases() {
     }
 
     const { basenameMap, rootDirs } = buildBasenameMap(workspaceRoot, {
-        directoriesToScan: config.get('directoriesToScan') || [],
-        ignoreDirectories: config.get('ignoreDirectories') || []
+        directoriesToScan: /** @type {string[]} */ (config.get('directoriesToScan') || []),
+        ignoreDirectories: /** @type {string[]} */ (config.get('ignoreDirectories') || [])
     });
 
     const { aliases: compiledAliases, ambiguousAliases, shadowedByManual } =

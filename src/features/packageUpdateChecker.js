@@ -2,15 +2,22 @@ const fs = require('fs');
 const path = require('path');
 const vscode = require('vscode');
 const { exec } = require('child_process');
-const { print, warn, error } = require('../core/logger');
+const { print, warn, error, errMsg } = require('../core/logger');
 const { PACKAGE_AUTHOR, PACKAGE_NAME } = require('../core/constants');
 const { getVersionFromWallyToml, getWorkspaceRoot } = require('../utils/wallyUtils');
 const { parse: parseTOML } = require('../utils/parseTOML');
 
 /**
+ * @typedef {object} ParsedVersion
+ * @property {number} major
+ * @property {number} minor
+ * @property {number} patch
+ */
+
+/**
  * Parses a semantic version string into components
  * @param {string} version - Version string like "1.2.3"
- * @returns {object} - Object with major, minor, patch properties
+ * @returns {ParsedVersion} - Object with major, minor, patch properties
  */
 function parseVersion(version) {
     const parts = version.split('.');
@@ -23,8 +30,8 @@ function parseVersion(version) {
 
 /**
  * Compares two version objects
- * @param {object} version1 - First version object
- * @param {object} version2 - Second version object
+ * @param {ParsedVersion} version1 - First version object
+ * @param {ParsedVersion} version2 - Second version object
  * @returns {number} - -1 if version1 < version2, 0 if equal, 1 if version1 > version2
  */
 function compareVersions(version1, version2) {
@@ -66,7 +73,9 @@ function findLatestInstalledVersion(workspaceRoot) {
         print(`Found RequireOnRails packages: ${requireOnRailsFolders.join(', ')}`);
         
         // Extract versions and find the latest
+        /** @type {string|null} */
         let latestVersion = null;
+        /** @type {ParsedVersion|null} */
         let latestVersionParsed = null;
         
         for (const folderName of requireOnRailsFolders) {
@@ -88,7 +97,7 @@ function findLatestInstalledVersion(workspaceRoot) {
         
         return latestVersion;
     } catch (error) {
-        warn('Error reading Packages/_Index directory:', error.message);
+        warn('Error reading Packages/_Index directory:', errMsg(error));
         return null;
     }
 }
@@ -148,7 +157,7 @@ function getLatestVersionFromWally(workspaceRoot) {
                 warn(`Full output was: ${stdout}`);
                 resolve(null);
             } catch (parseError) {
-                warn(`Error parsing wally search output: ${parseError.message}`);
+                warn(`Error parsing wally search output: ${errMsg(parseError)}`);
                 resolve(null);
             }
         });
@@ -170,7 +179,10 @@ function getInstalledVersionFromWallyToml(workspaceRoot) {
     
     try {
         const content = fs.readFileSync(wallyTomlPath, 'utf8');
-        const tomlData = parseTOML(content);
+        // parseTOML is untyped-by-shape; assert the wally.toml sections this function reads.
+        const tomlData = /** @type {{dependencies?: Record<string, string>, 'dev-dependencies'?: Record<string, string>}} */ (
+            /** @type {unknown} */ (parseTOML(content))
+        );
         
         const packageFullName = `${PACKAGE_AUTHOR}/${PACKAGE_NAME}`;
         
@@ -195,7 +207,7 @@ function getInstalledVersionFromWallyToml(workspaceRoot) {
         print('RequireOnRails not found in wally.toml dependencies');
         return null;
     } catch (error) {
-        warn(`Error reading wally.toml: ${error.message}`);
+        warn(`Error reading wally.toml: ${errMsg(error)}`);
         return null;
     }
 }
@@ -313,8 +325,10 @@ async function checkForPackageUpdates(workspaceRoot) {
             print(`Current version (${currentVersion}) is newer than latest available (${latestVersion}).?`);
         }
         
-    } catch (error) {
-        error('Error checking for package updates:', error.message);
+    } catch (e) {
+        // Binding renamed from `error`: it shadowed the imported logger `error`, so this line
+        // called the thrown value as a function (TypeError) instead of logging it.
+        error('Error checking for package updates:', errMsg(e));
     }
 }
 

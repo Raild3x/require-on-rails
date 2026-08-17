@@ -9,14 +9,22 @@ const {
 } = require('./addImportToFiles');
 
 // Store decoration types globally to properly dispose of them
+/** @type {vscode.TextEditorDecorationType | null} */
 let currentDecorationType = null;
 
 // Store the current editor document to avoid unnecessary reprocessing
+/** @type {string | null} */
 let currentEditorDocument = null;
 
+/**
+ * Dims the import require definition (and its selene comment) in the given editor.
+ *
+ * @param {vscode.TextEditor} editor - Editor whose document should be decorated
+ */
 function hideLines(editor) {
+    if (!editor) return;
     const editorLang = editor.document.languageId;
-    if (!editor || (editorLang !== 'luau' && editorLang !== 'lua')) {
+    if (editorLang !== 'luau' && editorLang !== 'lua') {
         return;
     }
 
@@ -33,7 +41,7 @@ function hideLines(editor) {
 
 
     const config = vscode.workspace.getConfiguration('require-on-rails');
-    const importModulePaths = config.get("importModulePaths", []);
+    const importModulePaths = /** @type {string[]} */ (config.get("importModulePaths", []));
     const pathsArray = Array.isArray(importModulePaths) ? importModulePaths : [importModulePaths];
     const defaultImportModulePath = pathsArray[0];
     const tryToAddImportRequire = config.get("tryToAddImportRequire", true);
@@ -63,7 +71,8 @@ function hideLines(editor) {
         ).then((selection) => {
             if (selection === 'Yes') {
                 const filePath = editor.document.fileName;
-                const preferredImportPlacement = config.get("preferredImportPlacement");
+                const preferredImportPlacement = /** @type {string} */ (config.get("preferredImportPlacement", 'TopOfFile'));
+                const contextualImportTemplate = /** @type {string|undefined} */ (config.get("contextualImportTemplate"));
 
                 if (!defaultImportModulePath) {
                     vscode.window.showWarningMessage('RequireOnRails: No import module path configured.');
@@ -71,7 +80,7 @@ function hideLines(editor) {
                 }
                 
                 // Use the centralized addImportToSingleFile function
-                const success = addImportToSingleFile(filePath, defaultImportModulePath, preferredImportPlacement);
+                const success = addImportToSingleFile(filePath, defaultImportModulePath, preferredImportPlacement, contextualImportTemplate);
                 
                 if (success) {
                     // Refresh the editor to show the new content and apply decorations
@@ -92,6 +101,7 @@ function hideLines(editor) {
 
     const seleneComment = '-- selene: allow(incorrect_standard_library_use)';
     const importLineIndexes = new Set(getImportRequireLineIndexes(text, importModulePaths));
+    /** @type {vscode.Range[]} */
     const linesToHide = [];
     text.split('\n').forEach((line, index) => {
         if (line.trim() === seleneComment || importLineIndexes.has(index)) {
@@ -103,6 +113,11 @@ function hideLines(editor) {
     editor.setDecorations(currentDecorationType, linesToHide);
 }
 
+/**
+ * Removes any decoration applied by {@link hideLines}.
+ *
+ * @param {vscode.TextEditor | undefined} editor - Editor to clear, if one is active
+ */
 function unhideLines(editor) {
     if (!editor) {
         return;

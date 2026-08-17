@@ -37,12 +37,40 @@ const CONFIG_KEYS = [
 // read its own configuration has not checked anything.
 class ConfigError extends Error {}
 
+/**
+ * The settings this checker reads, after per-key fallback to the manifest defaults. Values
+ * originate in JSON, so these types are the shape the extension contributes, not a guarantee.
+ * @typedef {object} CheckerConfig
+ * @property {string} [mode]
+ * @property {string[]} [directoriesToScan]
+ * @property {string[]} [ignoreDirectories]
+ * @property {Object<string, string>} [manualAliases]
+ * @property {string[]} [pathPriority]
+ * @property {string} [rojoProjectPath]
+ */
+
+/**
+ * One problem to report, positioned 0-based like the extension's finding objects.
+ * @typedef {object} Finding
+ * @property {string} file
+ * @property {number} line
+ * @property {number} column
+ * @property {number} endColumn
+ * @property {string} code
+ * @property {string} message
+ */
+
 // ---------------------------------------------------------------------------
 // Inputs
 // ---------------------------------------------------------------------------
 
 // GitHub passes action inputs as INPUT_<NAME> with the name uppercased and dashes kept.
 // The argv forms exist so the same checks can be run locally and from tests.
+/**
+ * @param {string} name
+ * @param {string[]} argv
+ * @returns {string | undefined}
+ */
 function getInput(name, argv) {
     const fromEnv = process.env[`INPUT_${name.toUpperCase()}`];
     if (fromEnv !== undefined && fromEnv !== '') return fromEnv;
@@ -64,6 +92,8 @@ function getInput(name, argv) {
 /**
  * Parses JSON with comments and trailing commas, the dialect VS Code writes settings.json in
  * and Luau accepts for .luaurc. Hand-rolled to keep this package dependency-free.
+ * @param {string} text
+ * @returns {any} Whatever the document contained
  */
 function parseJsonc(text) {
     const source = text.replace(/^﻿/, '');
@@ -102,17 +132,25 @@ function parseJsonc(text) {
 
 // Defaults come from the extension manifest rather than a second copy here, so the checker
 // cannot disagree with the editor about what an unset setting means.
+/**
+ * @param {string} key
+ * @returns {any} The manifest default, or undefined for a key the manifest does not contribute
+ */
 function defaultFor(key) {
-    const property = manifest.contributes.configuration.properties[`require-on-rails.${key}`];
+    const property = /** @type {Record<string, {default?: any}>} */ (
+        manifest.contributes.configuration.properties)[`require-on-rails.${key}`];
     return property ? property.default : undefined;
 }
 
 /**
  * Reads `<workingDir>/.vscode/settings.json`, falling back per key to the manifest defaults.
  * VS Code writes settings as flat dotted keys, which is the only form read here.
+ * @param {string} workingDir
+ * @returns {CheckerConfig}
  */
 function loadConfig(workingDir) {
     const settingsPath = path.join(workingDir, '.vscode', 'settings.json');
+    /** @type {Record<string, any>} */
     let settings = {};
 
     if (fs.existsSync(settingsPath)) {
@@ -120,17 +158,18 @@ function loadConfig(workingDir) {
         try {
             raw = fs.readFileSync(settingsPath, 'utf8');
         } catch (e) {
-            throw new ConfigError(`could not read ${toPosix(settingsPath)}: ${e.message}`);
+            throw new ConfigError(`could not read ${toPosix(settingsPath)}: ${e instanceof Error ? e.message : String(e)}`);
         }
         try {
             settings = raw.trim() ? parseJsonc(raw) : {};
         } catch (e) {
-            throw new ConfigError(`could not parse ${toPosix(settingsPath)}: ${e.message}`);
+            throw new ConfigError(`could not parse ${toPosix(settingsPath)}: ${e instanceof Error ? e.message : String(e)}`);
         }
     } else {
         console.log(`No ${toPosix(settingsPath)} found — checking with the extension's default settings.`);
     }
 
+    /** @type {Record<string, any>} */
     const config = {};
     for (const key of CONFIG_KEYS) {
         const value = settings[`require-on-rails.${key}`];
@@ -141,6 +180,10 @@ function loadConfig(workingDir) {
 
 // The extension's helpers take a VS Code configuration object; in CI the values are already
 // plain, so this is all of that interface they use.
+/**
+ * @param {Record<string, any>} config
+ * @returns {import('../features/pathResolver').ConfigLike}
+ */
 function asConfigObject(config) {
     return { get: (key, fallback) => (config[key] === undefined ? fallback : config[key]) };
 }
@@ -149,12 +192,18 @@ function asConfigObject(config) {
 // Checks
 // ---------------------------------------------------------------------------
 
+/** @param {string} p */
 function toPosix(p) {
     return p.replace(/\\/g, '/');
 }
 
 // Alias values are compared, not just their names, so a moved file is caught as drift.
+/**
+ * @param {Object<string, unknown> | null | undefined} aliases
+ * @returns {Record<string, string>}
+ */
 function normalizeAliasMap(aliases) {
+    /** @type {Record<string, string>} */
     const out = {};
     for (const [key, value] of Object.entries(aliases || {})) {
         if (typeof value !== 'string') continue;
@@ -165,12 +214,25 @@ function normalizeAliasMap(aliases) {
 
 // Every finding is anchored to a file and position so it can be rendered as an annotation on
 // the pull request diff. Positions are 0-based here, matching the extension's finding objects.
+/**
+ * @param {string} file
+ * @param {number} line
+ * @param {number} column
+ * @param {number} endColumn
+ * @param {string} code
+ * @param {string} message
+ * @returns {Finding}
+ */
 function makeFinding(file, line, column, endColumn, code, message) {
     return { file: toPosix(file), line, column, endColumn, code, message };
 }
 
 // An ambiguous basename produces no alias at all, so it is reported against the conflicting
 // files themselves — those are what a reviewer has to change.
+/**
+ * @param {Object<string, string[]>} ambiguousAliases
+ * @returns {Finding[]}
+ */
 function checkAmbiguous(ambiguousAliases) {
     return Object.keys(ambiguousAliases).sort().map(name => {
         const paths = ambiguousAliases[name];
@@ -182,8 +244,16 @@ function checkAmbiguous(ambiguousAliases) {
 }
 
 // Dynamic mode: an alias require is valid when its root is in the generated alias set.
+/**
+ * @param {string} workingDir
+ * @param {CheckerConfig} config
+ * @param {Object<string, string>} aliases
+ * @param {Object<string, string[]>} ambiguousAliases
+ * @returns {Finding[]}
+ */
 function checkDynamicRequires(workingDir, config, aliases, ambiguousAliases) {
     const aliasNames = new Set(Object.keys(aliases).map(key => key.replace(/^@/, '')));
+    /** @type {Finding[]} */
     const findings = [];
 
     for (const [filePath, text] of pathResolver.readSourceTexts(workingDir, asConfigObject(config))) {
@@ -198,6 +268,11 @@ function checkDynamicRequires(workingDir, config, aliases, ambiguousAliases) {
 
 // Only meaningful when .luaurc is committed. Dynamic-mode projects often gitignore it, and an
 // absent file is not a problem to report — there is simply no cached copy to verify.
+/**
+ * @param {string} workingDir
+ * @param {Object<string, string>} aliases
+ * @returns {Finding[]}
+ */
 function checkLuaurcDrift(workingDir, aliases) {
     const luaurcPath = path.join(workingDir, '.luaurc');
     if (!fs.existsSync(luaurcPath)) return [];
@@ -207,7 +282,7 @@ function checkLuaurcDrift(workingDir, aliases) {
         const raw = fs.readFileSync(luaurcPath, 'utf8');
         parsed = raw.trim() ? parseJsonc(raw) : {};
     } catch (e) {
-        throw new ConfigError(`could not parse ${toPosix(path.join(workingDir, '.luaurc'))}: ${e.message}`);
+        throw new ConfigError(`could not parse ${toPosix(path.join(workingDir, '.luaurc'))}: ${e instanceof Error ? e.message : String(e)}`);
     }
 
     const committed = normalizeAliasMap(parsed.aliases);
@@ -234,7 +309,7 @@ function checkLuaurcDrift(workingDir, aliases) {
 /**
  * Runs every check appropriate to the project's mode.
  * @param {string} workingDir - Project root containing .vscode/settings.json
- * @returns {object[]} Findings, empty when the project is clean
+ * @returns {Finding[]} Findings, empty when the project is clean
  */
 function runChecks(workingDir) {
     const config = loadConfig(workingDir);
@@ -244,6 +319,7 @@ function runChecks(workingDir) {
     // only thing to verify — and it verifies far more than dynamic mode can.
     if (config.mode === 'explicit') {
         const ctx = pathResolver.createContext(workingDir, config);
+        /** @type {Finding[]} */
         const findings = [];
         for (const [filePath, text] of pathResolver.readSourceTexts(workingDir, asConfigObject(config))) {
             const fromRel = toPosix(path.relative(workingDir, filePath));
@@ -269,16 +345,24 @@ function runChecks(workingDir) {
 // Reporting
 // ---------------------------------------------------------------------------
 
+/** @param {unknown} value */
 function escapeData(value) {
     return String(value).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
 }
 
+/** @param {unknown} value */
 function escapeProperty(value) {
     return escapeData(value).replace(/:/g, '%3A').replace(/,/g, '%2C');
 }
 
 // GitHub turns these lines into annotations on the pull request diff. Paths must be relative
 // to the repository root, and positions are 1-based.
+/**
+ * @param {'error' | 'warning'} level
+ * @param {Finding} finding
+ * @param {string} pathPrefix
+ * @returns {string}
+ */
 function annotation(level, finding, pathPrefix) {
     const file = toPosix(path.join(pathPrefix, finding.file));
     const properties = [
@@ -291,14 +375,20 @@ function annotation(level, finding, pathPrefix) {
     return `::${level} ${properties}::${escapeData(finding.message)}`;
 }
 
+/** @param {Finding[]} findings */
 function summarize(findings) {
     const counts = findings.reduce((acc, f) => {
         acc[f.code] = (acc[f.code] || 0) + 1;
         return acc;
-    }, {});
+    }, /** @type {Record<string, number>} */ ({}));
     return Object.keys(counts).sort().map(code => `${counts[code]} ${code}`).join(', ');
 }
 
+/**
+ * @param {Finding[]} findings
+ * @param {string} workingDirArg - Path prefix for reported files, '' when the run is rooted here
+ * @param {boolean} warnOnly
+ */
 function report(findings, workingDirArg, warnOnly) {
     const level = warnOnly ? 'warning' : 'error';
 
@@ -318,6 +408,10 @@ function report(findings, workingDirArg, warnOnly) {
     }
 }
 
+/**
+ * @param {string[]} [argv]
+ * @returns {0 | 1} Process exit code
+ */
 function main(argv = process.argv.slice(2)) {
     const workingDirArg = getInput('working-directory', argv) || '.';
     const warnOnly = getInput('warn-only', argv) === 'true';

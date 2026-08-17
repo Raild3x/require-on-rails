@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const vscode = require('vscode');
-const { print, warn } = require('../core/logger');
+const { print, warn, errMsg } = require('../core/logger');
 const {
     DEFAULT_CONTEXTUAL_IMPORT_TEMPLATE,
     getCommonConfig,
@@ -26,13 +26,14 @@ function addImportToAllFiles() {
         return;
     }
 
+    /** @type {string[]} */
     const filesToProcess = [];
-    
+
     // Scan all directories for files that need the import
     directoriesToScan.forEach(dir => {
         const dirPath = path.join(workspaceRoot, dir);
         if (fs.existsSync(dirPath) && fs.statSync(dirPath).isDirectory()) {
-            scanDirectory(dirPath, config.supportedExtensions, ignoreDirectories, (filePath) => {
+            scanDirectory(dirPath, config.supportedExtensions, ignoreDirectories, (/** @type {string} */ filePath) => {
                 if (fileNeedsImport(filePath, importModulePaths)) {
                     filesToProcess.push(filePath);
                 }
@@ -60,10 +61,15 @@ function addImportToAllFiles() {
 
 /**
  * Recursively scans directories for files that use custom aliases but lack import definition
+ * @param {string} dir - Directory to scan
+ * @param {string|string[]} importModulePaths - Configured import module path(s)
+ * @param {string[]} ignoreDirectories - Directory name patterns to skip
+ * @param {string[]} filesToProcess - Accumulator that receives matching file paths
+ * @returns {void}
  */
 function scanForFilesNeedingImport(dir, importModulePaths, ignoreDirectories, filesToProcess) {
     const config = getCommonConfig();
-    scanDirectory(dir, config.supportedExtensions, ignoreDirectories, (filePath) => {
+    scanDirectory(dir, config.supportedExtensions, ignoreDirectories, (/** @type {string} */ filePath) => {
         if (fileNeedsImport(filePath, importModulePaths)) {
             filesToProcess.push(filePath);
         }
@@ -72,6 +78,8 @@ function scanForFilesNeedingImport(dir, importModulePaths, ignoreDirectories, fi
 
 /**
  * Escapes regex metacharacters so configured import paths can be safely matched.
+ * @param {string} text
+ * @returns {string}
  */
 function escapeRegExp(text) {
     return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -79,6 +87,8 @@ function escapeRegExp(text) {
 
 /**
  * Normalizes configured import paths into a clean string array.
+ * @param {string|string[]} importModulePaths
+ * @returns {string[]}
  */
 function getImportPathsArray(importModulePaths) {
     const pathsArray = Array.isArray(importModulePaths) ? importModulePaths : [importModulePaths];
@@ -90,6 +100,8 @@ function getImportPathsArray(importModulePaths) {
 
 /**
  * Matches the legacy single-line override form: require = require(path)(script).
+ * @param {string} importPath
+ * @returns {RegExp}
  */
 function createSingleLineImportRegex(importPath) {
     const escapedPath = escapeRegExp(importPath);
@@ -100,6 +112,8 @@ function createSingleLineImportRegex(importPath) {
 
 /**
  * Matches the first line of split imports, capturing the assigned local variable name.
+ * @param {string} importPath
+ * @returns {RegExp}
  */
 function createImportAssignmentRegex(importPath) {
     const escapedPath = escapeRegExp(importPath);
@@ -110,6 +124,8 @@ function createImportAssignmentRegex(importPath) {
 
 /**
  * Matches the second line of split imports: require = <capturedVar>(script).
+ * @param {string} varName
+ * @returns {RegExp}
  */
 function createRequireOverwriteRegex(varName) {
     const escapedVarName = escapeRegExp(varName);
@@ -134,10 +150,15 @@ function createGenericImportAssignmentRegex() {
 
 /**
  * Returns line indexes for valid import override definitions in single-line or split form.
+ * @param {string} content - Full file text
+ * @param {string|string[]} importModulePaths - Configured import module path(s)
+ * @returns {number[]} - Matching line indexes, ascending
  */
 function getImportRequireLineIndexes(content, importModulePaths) {
     const lines = content.split('\n');
+    /** @type {Set<number>} */
     const matchedLineIndexes = new Set();
+    /** @type {{ lineIndex: number, variableName: string }[]} */
     const assignmentCandidates = [];
     const importPaths = getImportPathsArray(importModulePaths);
 
@@ -195,6 +216,8 @@ function getImportRequireLineIndexes(content, importModulePaths) {
 
 /**
  * Builds the contextual import snippet from a template for easier customization.
+ * @param {string} importModulePath
+ * @returns {string}
  */
 function createContextualImportSnippet(importModulePath) {
     const { contextualImportTemplate } = getCommonConfig();
@@ -203,6 +226,9 @@ function createContextualImportSnippet(importModulePath) {
 
 /**
  * Builds the contextual import snippet from a template, falling back when invalid.
+ * @param {string} importModulePath
+ * @param {string|undefined} template - Template containing `{IMPORT_MODULE_PATH}`; falls back to the default when absent or malformed
+ * @returns {string}
  */
 function createContextualImportSnippetFromTemplate(importModulePath, template) {
     const templateToUse =
@@ -215,6 +241,9 @@ function createContextualImportSnippetFromTemplate(importModulePath, template) {
 
 /**
  * Checks if a file has a valid import require definition
+ * @param {string} content - Full file text
+ * @param {string|string[]} importModulePaths - Configured import module path(s)
+ * @returns {boolean}
  */
 function hasValidImportRequire(content, importModulePaths) {
     return getImportRequireLineIndexes(content, importModulePaths).length > 0;
@@ -222,6 +251,9 @@ function hasValidImportRequire(content, importModulePaths) {
 
 /**
  * Checks if a file uses custom aliases but lacks the import require definition
+ * @param {string} filePath
+ * @param {string|string[]} importModulePaths - Configured import module path(s)
+ * @returns {boolean}
  */
 function fileNeedsImport(filePath, importModulePaths) {
     try {
@@ -238,13 +270,16 @@ function fileNeedsImport(filePath, importModulePaths) {
         // Use the centralized function to check for valid import require definitions
         return !hasValidImportRequire(content, importModulePaths);
     } catch (error) {
-        warn(`Error reading file ${filePath}:`, error.message);
+        warn(`Error reading file ${filePath}:`, errMsg(error));
         return false;
     }
 }
 
 /**
  * Helper function to check if directory should be ignored
+ * @param {string} dirName
+ * @param {string[]} ignorePatterns
+ * @returns {boolean}
  */
 function shouldIgnoreDirectory(dirName, ignorePatterns) {
     // This is now handled by workspaceUtils.shouldIgnoreDirectory
@@ -255,6 +290,10 @@ function shouldIgnoreDirectory(dirName, ignorePatterns) {
 
 /**
  * Shows a preview of files that will be modified
+ * @param {string[]} filesToProcess
+ * @param {string} defaultImportModulePath
+ * @param {string|undefined} contextualImportTemplate
+ * @returns {void}
  */
 function showFilesPreview(filesToProcess, defaultImportModulePath, contextualImportTemplate) {
     const workspaceFolders = vscode.workspace.workspaceFolders;
@@ -279,6 +318,11 @@ function showFilesPreview(filesToProcess, defaultImportModulePath, contextualImp
 
 /**
  * Adds the import require definition to all specified files
+ * @param {string[]} filesToProcess
+ * @param {string} defaultImportModulePath
+ * @param {string} workspaceRoot
+ * @param {string|undefined} contextualImportTemplate
+ * @returns {void}
  */
 function addImportToFiles(filesToProcess, defaultImportModulePath, workspaceRoot, contextualImportTemplate) {
     const config = getCommonConfig();
@@ -296,7 +340,7 @@ function addImportToFiles(filesToProcess, defaultImportModulePath, workspaceRoot
             }
         } catch (error) {
             errorCount++;
-            warn(`Failed to add import to ${filePath}:`, error.message);
+            warn(`Failed to add import to ${filePath}:`, errMsg(error));
         }
     });
     
@@ -312,6 +356,11 @@ function addImportToFiles(filesToProcess, defaultImportModulePath, workspaceRoot
 
 /**
  * Adds import require definition to a single file
+ * @param {string} filePath
+ * @param {string} defaultImportModulePath
+ * @param {string} preferredImportPlacement - One of `TopOfFile`, `BeforeFirstRequire`, `AfterDefiningRobloxServices`
+ * @param {string|undefined} contextualImportTemplate
+ * @returns {boolean}
  */
 function addImportToSingleFile(filePath, defaultImportModulePath, preferredImportPlacement, contextualImportTemplate) {
     const content = fs.readFileSync(filePath, 'utf8');

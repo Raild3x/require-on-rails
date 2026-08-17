@@ -7,6 +7,13 @@ const { getExplicitPathStyle, getExtensionConfig } = require('../utils/workspace
 
 const LANGUAGES = ['luau', 'lua'];
 
+/**
+ * Resolution context from pathResolver. Taken from createContext's return type so this stays
+ * in step with pathResolver rather than duplicating its shape.
+ * @typedef {ReturnType<typeof pathResolver.createContext>} ResolverContext
+ */
+
+/** @param {import('vscode').TextDocument} document */
 function isLuaDoc(document) {
     return LANGUAGES.includes(document.languageId) && document.uri.scheme === 'file';
 }
@@ -17,14 +24,26 @@ function getWorkspaceRoot() {
         : null;
 }
 
+/**
+ * @param {string} workspaceRoot
+ * @param {string} fsPath
+ * @returns {string}
+ */
 function toRel(workspaceRoot, fsPath) {
     return path.relative(workspaceRoot, fsPath).replace(/\\/g, '/');
 }
 
+/** @returns {ResolverContext | null} */
 function getCtx() {
     return pathResolver.getContext() || pathResolver.refreshContext();
 }
 
+/**
+ * @param {string} targetRel
+ * @param {string} fromRel
+ * @param {ResolverContext} ctx
+ * @returns {string}
+ */
 function renderFor(targetRel, fromRel, ctx) {
     const config = getExtensionConfig();
     return pathResolver.renderRequire(
@@ -38,6 +57,12 @@ function renderFor(targetRel, fromRel, ctx) {
 
 // The replacement for a bare "@name" short require, or null when the spec is not eligible:
 // already an alias root (or reserved), has path segments, or matches no known module.
+/**
+ * @param {string} spec
+ * @param {string} fromRel
+ * @param {ResolverContext} ctx
+ * @returns {string | null}
+ */
 function computeReplacement(spec, fromRel, ctx) {
     if (!spec.startsWith('@') || spec.includes('/')) return null;
     const name = spec.slice(1);
@@ -57,6 +82,7 @@ function computeReplacement(spec, fromRel, ctx) {
 
 const REQUIRE_TYPING_RE = /require\s*\(\s*(['"])([^'"]*)$/;
 
+/** @type {import('vscode').CompletionItemProvider} */
 const completionProvider = {
     provideCompletionItems(document, position) {
         if (!isLuaDoc(document)) return undefined;
@@ -76,6 +102,7 @@ const completionProvider = {
         const fromRel = toRel(workspaceRoot, document.uri.fsPath);
         const fragment = typed.slice(1).toLowerCase();
 
+        /** @type {{basename: string, target: string}[]} */
         const candidates = [];
         for (const [basename, targets] of Object.entries(ctx.targets)) {
             if (!basename.toLowerCase().startsWith(fragment)) continue;
@@ -118,10 +145,13 @@ const completionProvider = {
 // doc uri string -> Set of line numbers edited since the last sweep. Only requires on
 // these lines are auto-replaced by the cursor-leave trigger, so merely moving the caret
 // through pre-existing short requires never rewrites them.
+/** @type {Map<string, Set<number>>} */
 const _editedLines = new Map();
 // editor -> Position[] of the previous selection, to detect "cursor left the string".
+/** @type {WeakMap<import('vscode').TextEditor, import('vscode').Position[]>} */
 const _prevSelections = new WeakMap();
 
+/** @param {import('vscode').TextDocumentChangeEvent} event */
 function noteEditedLines(event) {
     if (!isLuaDoc(event.document)) return;
     let lines = _editedLines.get(event.document.uri.toString());
@@ -137,9 +167,15 @@ function noteEditedLines(event) {
     }
 }
 
+/**
+ * @param {import('vscode').TextDocument} document
+ * @param {number} line
+ * @returns {{spec: string, range: import('vscode').Range}[]}
+ */
 function requireMatchesOnLine(document, line) {
     if (line >= document.lineCount) return [];
     const text = document.lineAt(line).text;
+    /** @type {{spec: string, range: import('vscode').Range}[]} */
     const matches = [];
     pathResolver.REQUIRE_STRING.lastIndex = 0;
     let match;
@@ -154,6 +190,10 @@ function requireMatchesOnLine(document, line) {
     return matches;
 }
 
+/**
+ * @param {import('vscode').TextDocument} document
+ * @param {import('vscode').Range} range
+ */
 function selectionsIntersect(document, range) {
     for (const editor of vscode.window.visibleTextEditors) {
         if (editor.document !== document) continue;
@@ -164,6 +204,7 @@ function selectionsIntersect(document, range) {
     return false;
 }
 
+/** @param {import('vscode').TextEditorSelectionChangeEvent} event */
 function onSelectionChanged(event) {
     const editor = event.textEditor;
     const document = editor.document;
@@ -200,6 +241,10 @@ function onSelectionChanged(event) {
     }
 }
 
+/**
+ * @param {import('vscode').TextDocument} document
+ * @returns {import('vscode').TextEdit[]}
+ */
 function computeSweepEdits(document) {
     const workspaceRoot = getWorkspaceRoot();
     if (!workspaceRoot) return [];
@@ -207,6 +252,7 @@ function computeSweepEdits(document) {
     if (!ctx) return [];
 
     const fromRel = toRel(workspaceRoot, document.uri.fsPath);
+    /** @type {import('vscode').TextEdit[]} */
     const edits = [];
     for (const found of pathResolver.findRequireStrings(document.getText())) {
         const range = new vscode.Range(found.line, found.startColumn, found.line, found.endColumn);
@@ -218,6 +264,7 @@ function computeSweepEdits(document) {
     return edits;
 }
 
+/** @param {import('vscode').TextDocumentWillSaveEvent} event */
 function onWillSave(event) {
     if (!isLuaDoc(event.document)) return;
     event.waitUntil(Promise.resolve(computeSweepEdits(event.document)));
@@ -232,12 +279,19 @@ function onWillSave(event) {
 // ---------------------------------------------------------------------------
 
 // Maps a module path under a renamed prefix to its new location, or null if unaffected.
+/**
+ * @param {string} modulePath
+ * @param {string} oldPrefix
+ * @param {string} newPrefix
+ * @returns {string | null}
+ */
 function remapModulePath(modulePath, oldPrefix, newPrefix) {
     if (modulePath === oldPrefix) return newPrefix;
     if (modulePath.startsWith(oldPrefix + '/')) return newPrefix + modulePath.slice(oldPrefix.length);
     return null;
 }
 
+/** @param {import('vscode').FileRenameEvent['files']} files */
 async function handleRenameEventExplicit(files) {
     const workspaceRoot = getWorkspaceRoot();
     if (!workspaceRoot) return;

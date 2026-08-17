@@ -5,10 +5,40 @@ const path = require('path');
 /** @type {typeof import('vscode') | null} */
 let vscode = null;
 try { vscode = require('vscode'); } catch (e) { /* running outside VS Code */ }
-const { debug, warn } = require('../core/logger');
+const { debug, warn, errMsg } = require('../core/logger');
 
 const { getMode, getExplicitPathStyle, runtimeModuleRequired } = require('../utils/workspaceUtils');
 const pathResolver = require('./pathResolver');
+
+/**
+ * Resolution context from pathResolver. Taken from createContext's return type so this stays
+ * in step with pathResolver rather than duplicating its shape.
+ * @typedef {ReturnType<typeof pathResolver.createContext>} ResolverContext
+ */
+
+/**
+ * One unresolvable alias require, positioned for a squiggle.
+ * @typedef {object} UnresolvedAlias
+ * @property {string} aliasName - First segment of the alias path, without the '@'
+ * @property {string} aliasPath - The full require string, e.g. "@Shared/Stuff"
+ * @property {number} line - 0-based line index
+ * @property {number} startColumn
+ * @property {number} endColumn
+ */
+
+/**
+ * One require string explicit mode cannot resolve, with the message explaining why.
+ * @typedef {object} UnresolvedRequire
+ * @property {string} spec
+ * @property {number} line
+ * @property {number} startColumn
+ * @property {number} endColumn
+ * @property {string} message
+ */
+
+/** @typedef {{totalUnresolved: number, filesWithIssues: number}} RefreshCounts */
+
+/** @typedef {Object<string, string[]>} AmbiguousAliases */
 
 // Matches require("@Alias") / require('@Alias/Sub/Path'). Only @-prefixed strings are alias
 // requires; RequireOnRails passes anything else through to Roblox's own require.
@@ -18,10 +48,12 @@ const ALIAS_REQUIRE = /require\s*\(\s*(['"])(@[^'"]*)\1\s*\)/g;
 const RESERVED_ALIASES = new Set(['self', 'game']);
 
 // A single collection, so re-running replaces the previous results instead of stacking them.
+/** @type {import('vscode').DiagnosticCollection | null} */
 let _collection = null;
 
 // Remembered from the last alias generation so a diagnostic can explain *why* an alias is
 // missing (ambiguous vs simply not there). Refreshes triggered by a file save reuse it.
+/** @type {AmbiguousAliases} */
 let _ambiguousAliases = {};
 
 function getCollection() {
@@ -32,6 +64,7 @@ function getCollection() {
     return _collection;
 }
 
+/** @param {AmbiguousAliases | null | undefined} ambiguousAliases */
 function setAmbiguousAliases(ambiguousAliases) {
     _ambiguousAliases = ambiguousAliases || {};
 }
@@ -48,6 +81,10 @@ function disposeAliasDiagnostics() {
 
 // Alias keys are accepted both bare ("Shared") and @-prefixed ("@Shared"), because Luau
 // accepts both in .luaurc and this extension's own defaults have used each form.
+/**
+ * @param {string} workspaceRoot
+ * @returns {Set<string> | null} Alias names without the '@', or null when .luaurc is absent/unparseable
+ */
 function readAliasNames(workspaceRoot) {
     const luaurcPath = path.join(workspaceRoot, '.luaurc');
     if (!fs.existsSync(luaurcPath)) return null;
@@ -58,7 +95,7 @@ function readAliasNames(workspaceRoot) {
         parsed = raw ? JSON.parse(raw) : {};
     } catch (e) {
         // generateFileAliases already surfaces a parse failure to the user; stay quiet here.
-        debug(`aliasDiagnostics: skipping, .luaurc could not be parsed (${e.message})`);
+        debug(`aliasDiagnostics: skipping, .luaurc could not be parsed (${errMsg(e)})`);
         return null;
     }
 
@@ -69,7 +106,13 @@ function readAliasNames(workspaceRoot) {
 // Finds every unresolvable alias require in one file's text.
 // Lines are scanned individually so the line/column for the diagnostic falls out for free,
 // and full-line comments are skipped so commented-out code is not reported.
+/**
+ * @param {string} text
+ * @param {Set<string>} aliasNames
+ * @returns {UnresolvedAlias[]}
+ */
 function findUnresolvedAliases(text, aliasNames) {
+    /** @type {UnresolvedAlias[]} */
     const found = [];
 
     text.split(/\r?\n/).forEach((line, lineIndex) => {
@@ -101,6 +144,11 @@ function findUnresolvedAliases(text, aliasNames) {
 
 // Explains one unresolved alias, distinguishing "dropped because ambiguous" from "no such
 // module". Pure, so the CI checker reports these in exactly the words the editor uses.
+/**
+ * @param {UnresolvedAlias} unresolved
+ * @param {AmbiguousAliases} ambiguousAliases
+ * @returns {{code: 'ambiguous-alias' | 'unknown-alias', message: string}}
+ */
 function unresolvedAliasMessage(unresolved, ambiguousAliases) {
     const ambiguousPaths = ambiguousAliases[unresolved.aliasName];
     return {
@@ -114,6 +162,10 @@ function unresolvedAliasMessage(unresolved, ambiguousAliases) {
     };
 }
 
+/**
+ * @param {UnresolvedAlias} unresolved
+ * @returns {import('vscode').Diagnostic}
+ */
 function buildDiagnostic(unresolved) {
     if (!vscode) throw new Error('buildDiagnostic requires VS Code.');
     const { message, code } = unresolvedAliasMessage(unresolved, _ambiguousAliases);
@@ -132,6 +184,12 @@ function buildDiagnostic(unresolved) {
 }
 
 // Dynamic mode: re-reads .luaurc and reports requires whose alias root is missing.
+/**
+ * @param {string} workspaceRoot
+ * @param {import('vscode').WorkspaceConfiguration} config
+ * @param {import('vscode').DiagnosticCollection} collection
+ * @returns {RefreshCounts | undefined}
+ */
 function refreshDynamicDiagnostics(workspaceRoot, config, collection) {
     if (!vscode) return;
     const aliasNames = readAliasNames(workspaceRoot);
@@ -160,7 +218,14 @@ function refreshDynamicDiagnostics(workspaceRoot, config, collection) {
 // flagging it would just flicker while the user types. 'unverifiable' resolutions stay silent.
 //
 // Pure, so the CI checker validates explicit-mode requires by the same rules and words.
+/**
+ * @param {string} text
+ * @param {string} fromFileRel
+ * @param {ResolverContext} ctx
+ * @returns {UnresolvedRequire[]}
+ */
 function findUnresolvedRequires(text, fromFileRel, ctx) {
+    /** @type {UnresolvedRequire[]} */
     const found = [];
 
     for (const occurrence of pathResolver.findRequireStrings(text)) {
@@ -193,6 +258,12 @@ function findUnresolvedRequires(text, fromFileRel, ctx) {
 }
 
 // Explicit mode: full-resolution validation of every require string in the workspace.
+/**
+ * @param {string} workspaceRoot
+ * @param {import('vscode').WorkspaceConfiguration} config
+ * @param {import('vscode').DiagnosticCollection} collection
+ * @returns {RefreshCounts | undefined}
+ */
 function refreshExplicitDiagnostics(workspaceRoot, config, collection) {
     if (!vscode) return;
     const ctx = pathResolver.getContext() || pathResolver.refreshContext();
@@ -216,6 +287,11 @@ function refreshExplicitDiagnostics(workspaceRoot, config, collection) {
     return { totalUnresolved, filesWithIssues };
 }
 
+/**
+ * @param {UnresolvedRequire} found
+ * @param {string} message
+ * @returns {import('vscode').Diagnostic}
+ */
 function makeExplicitDiagnostic(found, message) {
     if (!vscode) throw new Error('makeExplicitDiagnostic requires VS Code.');
     const diagnostic = new vscode.Diagnostic(
@@ -266,6 +342,10 @@ function collectIgnoredSettings() {
     return ignored;
 }
 
+/**
+ * @param {string} workspaceRoot
+ * @param {import('vscode').DiagnosticCollection} collection
+ */
 function refreshSettingsDiagnostics(workspaceRoot, collection) {
     if (!vscode) return;
     const settingsPath = path.join(workspaceRoot, '.vscode', 'settings.json');
@@ -279,7 +359,7 @@ function refreshSettingsDiagnostics(workspaceRoot, collection) {
         try {
             text = fs.readFileSync(settingsPath, 'utf8');
         } catch (e) {
-            debug(`aliasDiagnostics: could not read settings.json (${e.message})`);
+            debug(`aliasDiagnostics: could not read settings.json (${errMsg(e)})`);
         }
     }
     if (text === null) {

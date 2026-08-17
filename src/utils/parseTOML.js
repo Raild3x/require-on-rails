@@ -1,4 +1,4 @@
-const { warn, error } = require('../core/logger');
+const { warn, error, errMsg } = require('../core/logger');
 
 /* EXAMPLE USAGE
 const { parse, stringify } = require('./parseTOML');
@@ -25,20 +25,39 @@ const tomlStr = stringify({
 */
 
 /**
+ * A TOML table: an arbitrary bag of keys whose values are TOML values.
+ * Values are `any` on purpose - a parsed TOML document is a dynamic tree and
+ * callers (e.g. packageUpdateChecker) index straight into nested tables such as
+ * `tomlData.dependencies[name]`. A precise recursive union would force every
+ * caller to narrow before every access.
+ * @typedef {{[key: string]: any}} TomlTable
+ */
+
+/**
+ * Any value that can appear in a TOML document.
+ * Nested arrays are typed `any[]` rather than `TomlValue[]` because a JSDoc
+ * `@typedef` cannot reference itself (TS2456) the way a `type` alias can.
+ * @typedef {string | number | boolean | any[] | TomlTable} TomlValue
+ */
+
+/**
  * Simple TOML parser that converts TOML strings to JavaScript objects
  * Supports basic TOML features: strings, numbers, booleans, arrays, tables
  */
 class TOMLParser {
     constructor() {
+        /** @type {TomlTable} */
         this.result = {};
+        /** @type {TomlTable} */
         this.currentSection = this.result;
+        /** @type {string[]} */
         this.currentPath = [];
     }
 
     /**
      * Parse a TOML string into a JavaScript object
      * @param {string} tomlString - The TOML content to parse
-     * @returns {object} - Parsed JavaScript object
+     * @returns {TomlTable} - Parsed JavaScript object
      */
     parse(tomlString) {
         this.result = {};
@@ -65,7 +84,7 @@ class TOMLParser {
                     this.parseKeyValue(line);
                 }
             } catch (err) {
-                warn(`Error parsing TOML line ${i + 1}: "${line}" - ${err.message}`);
+                warn(`Error parsing TOML line ${i + 1}: "${line}" - ${errMsg(err)}`);
             }
         }
 
@@ -74,6 +93,8 @@ class TOMLParser {
 
     /**
      * Parse table headers like [section] or [section.subsection]
+     * @param {string} line - The raw header line, including the surrounding brackets
+     * @returns {void}
      */
     parseTableHeader(line) {
         const header = line.slice(1, -1).trim();
@@ -91,6 +112,8 @@ class TOMLParser {
 
     /**
      * Parse key-value pairs
+     * @param {string} line - A `key = value` line
+     * @returns {void}
      */
     parseKeyValue(line) {
         const equalIndex = line.indexOf('=');
@@ -103,6 +126,8 @@ class TOMLParser {
 
     /**
      * Parse various TOML value types
+     * @param {string} valueStr - The raw right-hand side of an assignment
+     * @returns {TomlValue} - The decoded value
      */
     parseValue(valueStr) {
         valueStr = valueStr.trim();
@@ -136,11 +161,14 @@ class TOMLParser {
 
     /**
      * Parse array values
+     * @param {string} arrayStr - The raw array literal, including the surrounding brackets
+     * @returns {TomlValue[]} - The decoded array elements
      */
     parseArray(arrayStr) {
         const content = arrayStr.slice(1, -1).trim();
         if (!content) return [];
 
+        /** @type {TomlValue[]} */
         const items = [];
         let current = '';
         let inQuotes = false;
@@ -184,12 +212,13 @@ class TOMLParser {
  */
 class TOMLStringifier {
     constructor() {
+        /** @type {string[]} */
         this.output = [];
     }
 
     /**
      * Convert a JavaScript object to TOML string
-     * @param {object} obj - The object to convert
+     * @param {TomlTable} obj - The object to convert
      * @returns {string} - TOML formatted string
      */
     stringify(obj) {
@@ -200,9 +229,14 @@ class TOMLStringifier {
 
     /**
      * Recursively stringify an object
+     * @param {TomlTable} obj - The table to emit
+     * @param {string[]} path - The table header path leading to `obj`
+     * @returns {void}
      */
     stringifyObject(obj, path) {
+        /** @type {string[]} */
         const simpleKeys = [];
+        /** @type {string[]} */
         const tableKeys = [];
 
         // Separate simple values from nested objects
@@ -241,6 +275,8 @@ class TOMLStringifier {
 
     /**
      * Check if a value is simple (not an object or array of objects)
+     * @param {unknown} value - The value to inspect
+     * @returns {boolean} - True when the value can be emitted inline
      */
     isSimpleValue(value) {
         if (value === null || value === undefined) return true;
@@ -253,6 +289,8 @@ class TOMLStringifier {
 
     /**
      * Convert a value to its TOML string representation
+     * @param {unknown} value - The value to render
+     * @returns {string} - The TOML literal for `value`
      */
     stringifyValue(value) {
         if (value === null || value === undefined) {
@@ -283,21 +321,21 @@ class TOMLStringifier {
 /**
  * Parse TOML string to JavaScript object
  * @param {string} tomlString - The TOML content to parse
- * @returns {object} - Parsed JavaScript object
+ * @returns {TomlTable} - Parsed JavaScript object
  */
 function parse(tomlString) {
     try {
         const parser = new TOMLParser();
         return parser.parse(tomlString);
     } catch (err) {
-        error('Failed to parse TOML:', err.message);
+        error('Failed to parse TOML:', errMsg(err));
         return {};
     }
 }
 
 /**
  * Convert JavaScript object to TOML string
- * @param {object} obj - The object to convert
+ * @param {TomlTable} obj - The object to convert
  * @returns {string} - TOML formatted string
  */
 function stringify(obj) {
@@ -305,7 +343,7 @@ function stringify(obj) {
         const stringifier = new TOMLStringifier();
         return stringifier.stringify(obj);
     } catch (err) {
-        error('Failed to stringify to TOML:', err.message);
+        error('Failed to stringify to TOML:', errMsg(err));
         return '';
     }
 }

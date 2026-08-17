@@ -5,7 +5,7 @@ let vscode = null;
 try { vscode = require('vscode'); } catch (e) { /* running outside VS Code */ }
 const fs = require('fs');
 const path = require('path');
-const { warn } = require('../core/logger');
+const { warn, errMsg } = require('../core/logger');
 
 const DEFAULT_CONTEXTUAL_IMPORT_TEMPLATE = [
     'local Import = require({IMPORT_MODULE_PATH})',
@@ -83,7 +83,7 @@ function scanDirectory(dir, supportedExtensions, ignoreDirectories, callback) {
             }
         }
     } catch (error) {
-        warn(`Error scanning directory ${dir}:`, error.message);
+        warn(`Error scanning directory ${dir}:`, errMsg(error));
     }
 }
 
@@ -98,7 +98,20 @@ function getExtensionConfig() {
 
 /**
  * Gets common configuration values used across multiple modules
- * @returns {object} - Common configuration object
+ * @returns {{
+ *   directoriesToScan: string[],
+ *   ignoreDirectories: string[],
+ *   supportedExtensions: string[],
+ *   importModulePaths: string[],
+ *   tryToAddImportRequire: boolean,
+ *   preferredImportPlacement: 'TopOfFile'|'BeforeFirstRequire'|'AfterDefiningRobloxServices',
+ *   importOpacity: number,
+ *   contextualImportTemplate: string,
+ *   mode: 'dynamic'|'explicit',
+ *   explicitPathStyle: 'alias'|'relative'|'game',
+ *   preferRelativePaths: boolean,
+ *   rojoProjectPath: string
+ * }} - Common configuration object
  */
 function getCommonConfig() {
     const config = getExtensionConfig();

@@ -2,10 +2,16 @@ const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
 const { exec } = require('child_process');
-const { print, warn, error } = require('../core/logger');
+const { print, warn, error, errMsg } = require('../core/logger');
 const { PACKAGE_AUTHOR, PACKAGE_NAME, MODULE_ACCESS_NAME, FALLBACK_VERSION } = require('../core/constants');
 const { getVersionFromWallyToml, hasWorkspaceFolders, getWorkspaceRoot } = require('../utils/wallyUtils');
 
+/**
+ * Resolves the version constraint to add to wally.toml, falling back to the local
+ * wally.toml and finally to the hardcoded constant.
+ *
+ * @returns {Promise<string>} - Version constraint (e.g. `^1.2.3`)
+ */
 async function getLatestVersion() {
     return new Promise((resolve, reject) => {
         exec(`wally search ${PACKAGE_NAME}`, (error, stdout, stderr) => {
@@ -64,7 +70,7 @@ async function getLatestVersion() {
                 // Final fallback
                 resolve(FALLBACK_VERSION);
             } catch (parseError) {
-                warn('Error parsing wally search output:', parseError.message);
+                warn('Error parsing wally search output:', errMsg(parseError));
                 
                 // Try fallback before giving up
                 const workspaceRoot = getWorkspaceRoot();
@@ -85,6 +91,12 @@ async function getLatestVersion() {
     });
 }
 
+/**
+ * Prompts the user for an installation method and installs the RequireOnRails Luau module.
+ *
+ * @param {vscode.ExtensionContext} context - The extension context
+ * @returns {Promise<void>}
+ */
 async function downloadLuauModule(context) {
     // Check if workspace is available
     if (!hasWorkspaceFolders()) {
@@ -92,7 +104,8 @@ async function downloadLuauModule(context) {
         return;
     }
 
-    const workspaceRoot = getWorkspaceRoot();
+    // Non-null: guarded by the hasWorkspaceFolders() check above.
+    const workspaceRoot = /** @type {string} */ (getWorkspaceRoot());
 
     // Ask user for installation method
     const installMethod = await vscode.window.showQuickPick([
@@ -122,6 +135,13 @@ async function downloadLuauModule(context) {
     }
 }
 
+/**
+ * Adds the RequireOnRails dependency to wally.toml (creating it if needed) and optionally
+ * runs `wally install`.
+ *
+ * @param {string} workspaceRoot - Root directory of the workspace
+ * @returns {Promise<void>}
+ */
 async function installViaWally(workspaceRoot) {
     const wallyTomlPath = path.join(workspaceRoot, 'wally.toml');
 
@@ -179,10 +199,16 @@ async function installViaWally(workspaceRoot) {
         }
 
     } catch (error) {
-        vscode.window.showErrorMessage(`RequireOnRails: Error updating wally.toml: ${error.message}`);
+        vscode.window.showErrorMessage(`RequireOnRails: Error updating wally.toml: ${errMsg(error)}`);
     }
 }
 
+/**
+ * Writes a starter wally.toml that already includes the RequireOnRails dependency.
+ *
+ * @param {string} wallyTomlPath - Path the wally.toml should be written to
+ * @returns {Promise<void>}
+ */
 async function createWallyToml(wallyTomlPath) {
     const latestVersion = await getLatestVersion();
     
@@ -200,7 +226,12 @@ ${MODULE_ACCESS_NAME} = "${PACKAGE_AUTHOR}/${PACKAGE_NAME}@${latestVersion}"
     vscode.window.showInformationMessage('RequireOnRails: Created wally.toml with RequireOnRails dependency.');
 }
 
-/** @returns {Promise<void>} */
+/**
+ * Runs `wally install` in the workspace root.
+ *
+ * @param {string} workspaceRoot - Root directory of the workspace
+ * @returns {Promise<void>}
+ */
 async function runWallyInstall(workspaceRoot) {
     return new Promise((resolve) => {
         vscode.window.showInformationMessage('RequireOnRails: Running wally install...');
@@ -222,6 +253,13 @@ async function runWallyInstall(workspaceRoot) {
     });
 }
 
+/**
+ * Copies the bundled init.luau into the workspace as RequireOnRails.luau.
+ *
+ * @param {vscode.ExtensionContext} context - The extension context
+ * @param {string} workspaceRoot - Root directory of the workspace
+ * @returns {Promise<void>}
+ */
 async function installRawModule(context, workspaceRoot) {
     try {
         // Get the source init.luau file from the wally_package
@@ -312,7 +350,7 @@ async function installRawModule(context, workspaceRoot) {
         });
 
     } catch (error) {
-        vscode.window.showErrorMessage(`RequireOnRails: Error installing raw module: ${error.message}`);
+        vscode.window.showErrorMessage(`RequireOnRails: Error installing raw module: ${errMsg(error)}`);
     }
 }
 

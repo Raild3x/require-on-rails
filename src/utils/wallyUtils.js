@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const vscode = require('vscode');
-const { print, warn } = require('../core/logger');
+const { print, warn, errMsg } = require('../core/logger');
 const { EXTENSION_ID, EXTENSION_WALLY_TOML_PATH, VERSION_REGEX } = require('../core/constants');
 
 /**
@@ -13,7 +13,7 @@ function getExtensionPath() {
         const extension = vscode.extensions.getExtension(EXTENSION_ID);
         return extension?.extensionPath || null;
     } catch (error) {
-        warn('Error getting extension path:', error.message);
+        warn('Error getting extension path:', errMsg(error));
         return null;
     }
 }
@@ -59,7 +59,7 @@ function readVersionFromWallyToml(wallyTomlPath) {
         warn(`Could not find version in wally.toml: ${wallyTomlPath}`);
         return null;
     } catch (error) {
-        warn(`Error reading wally.toml (${wallyTomlPath}):`, error.message);
+        warn(`Error reading wally.toml (${wallyTomlPath}):`, errMsg(error));
         return null;
     }
 }

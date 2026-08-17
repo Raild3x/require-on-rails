@@ -5,8 +5,42 @@ const path = require('path');
 /** @type {typeof import('vscode') | null} */
 let vscode = null;
 try { vscode = require('vscode'); } catch (e) { /* running outside VS Code */ }
-const { debug, warn } = require('../core/logger');
+const { debug, warn, errMsg } = require('../core/logger');
 const { buildBasenameMap, compileIgnorePatterns, findIgnoreMatch } = require('./updateLuaFileAliases');
+
+/**
+ * One `$path` node of a Rojo project tree.
+ * @typedef {object} RojoEntry
+ * @property {string} fsPath - Extension-stripped, workspace-root-relative filesystem path
+ * @property {string} dmPath - Slash-joined DataModel path of the node
+ */
+
+/**
+ * Everything path resolution needs. Built by createContext(), cached by refreshContext(),
+ * and consumed here plus by aliasDiagnostics and the CI checker.
+ * @typedef {object} ResolverContext
+ * @property {string} workspaceRoot - Absolute path of the workspace root
+ * @property {Record<string, string>} aliases - Bare alias name -> workspace-root-relative path
+ * @property {RojoEntry[] | null} rojoMap - null when no Rojo project could be read/parsed
+ * @property {Record<string, string[]>} targets - Basename -> candidate root-relative file paths
+ * @property {Set<string>} targetSet - Every indexed root-relative target path
+ * @property {string[]} pathPriority - Normalized path prefixes, highest priority first
+ */
+
+/**
+ * The slice of vscode.WorkspaceConfiguration these helpers use, so the CI checker can pass a
+ * plain object instead.
+ * @typedef {{get: (section: string, defaultValue?: any) => any}} ConfigLike
+ */
+
+/**
+ * One require string found in a document, with its position.
+ * @typedef {object} RequireOccurrence
+ * @property {string} spec
+ * @property {number} line - Zero-based line index
+ * @property {number} startColumn
+ * @property {number} endColumn
+ */
 
 const supportedExtensions = ['.lua', '.luau'];
 
@@ -24,22 +58,27 @@ const RESERVED_ALIASES = new Set(['self', 'game']);
 // paths; callers normalize at the boundary.
 // ---------------------------------------------------------------------------
 
+/** @param {string} p */
 function normalizeSlashes(p) {
     return p.replace(/\\/g, '/').replace(/^\.\//, '');
 }
 
+/** @param {string} p */
 function stripExt(p) {
     return p.replace(/\.(luau|lua)$/, '');
 }
 
 // init.luau / init.server.luau / init.client.luau — the file that *is* its folder.
+/** @param {string} fileRel */
 function isInitFile(fileRel) {
-    const stem = stripExt(fileRel.split('/').pop());
+    // String.split always yields at least one element, so pop() is never undefined here.
+    const stem = stripExt(/** @type {string} */ (fileRel.split('/').pop()));
     return stem === 'init' || stem === 'init.server' || stem === 'init.client';
 }
 
 // The requirable module path for a target file: extension stripped, and an init file
 // collapses to its folder ("Dir/init.luau" -> "Dir").
+/** @param {string} targetRel */
 function modulePathOf(targetRel) {
     const noExt = stripExt(targetRel);
     if (isInitFile(targetRel)) {
@@ -52,16 +91,25 @@ function modulePathOf(targetRel) {
 // init file is identified with its folder, so its requires resolve from the folder's
 // PARENT ("Dir/init.luau" writing "./Sibling" means a sibling of Dir, and children are
 // reached via @self). Regular files resolve from their containing directory.
+/** @param {string} fileRel */
 function baseDir(fileRel) {
     const parts = fileRel.split('/');
     const dropCount = isInitFile(fileRel) ? 2 : 1;
     return parts.slice(0, Math.max(0, parts.length - dropCount)).join('/');
 }
 
+/**
+ * @param {string} p
+ * @returns {string[]}
+ */
 function segments(p) {
     return p === '' ? [] : p.split('/');
 }
 
+/**
+ * @param {string[]} a
+ * @param {string[]} b
+ */
 function commonPrefixLength(a, b) {
     let i = 0;
     while (i < a.length && i < b.length && a[i] === b[i]) i++;
@@ -70,6 +118,11 @@ function commonPrefixLength(a, b) {
 
 // Resolve "."/".." segments against a base directory. Returns null if the path escapes
 // the workspace root.
+/**
+ * @param {string} baseDirRel
+ * @param {string} spec
+ * @returns {string | null}
+ */
 function resolveDots(baseDirRel, spec) {
     const out = segments(baseDirRel);
     for (const seg of spec.split('/')) {
@@ -89,6 +142,7 @@ function resolveDots(baseDirRel, spec) {
 // already fire on file/settings/.luaurc/Rojo-project changes.
 // ---------------------------------------------------------------------------
 
+/** @type {ResolverContext | null} */
 let _ctx = null;
 
 function invalidateContext() {
@@ -101,6 +155,10 @@ function getContext() {
 
 // Alias keys are accepted bare ("Shared") and @-prefixed ("@Shared"), same as
 // aliasDiagnostics.readAliasNames. Values are workspace-root-relative paths.
+/**
+ * @param {string} workspaceRoot
+ * @returns {Record<string, string>}
+ */
 function readAliasMap(workspaceRoot) {
     const luaurcPath = path.join(workspaceRoot, '.luaurc');
     if (!fs.existsSync(luaurcPath)) return {};
@@ -109,9 +167,10 @@ function readAliasMap(workspaceRoot) {
         const raw = fs.readFileSync(luaurcPath, 'utf8');
         parsed = raw ? JSON.parse(raw) : {};
     } catch (e) {
-        debug(`pathResolver: .luaurc could not be parsed (${e.message}); no alias roots available.`);
+        debug(`pathResolver: .luaurc could not be parsed (${errMsg(e)}); no alias roots available.`);
         return {};
     }
+    /** @type {Record<string, string>} */
     const aliases = {};
     for (const [key, value] of Object.entries(parsed && parsed.aliases ? parsed.aliases : {})) {
         if (typeof value !== 'string') continue;
@@ -124,6 +183,11 @@ function readAliasMap(workspaceRoot) {
 // Walks a Rojo project tree collecting { fsPath, dmPath } at every string-valued $path.
 // fsPath is extension-stripped so file nodes ("Import": {"$path": "src/Import.luau"})
 // match module paths directly. Glob $path values and globIgnorePaths are not supported.
+/**
+ * @param {string} workspaceRoot
+ * @param {string} rojoProjectPath
+ * @returns {RojoEntry[] | null}
+ */
 function parseRojoProject(workspaceRoot, rojoProjectPath) {
     const absolute = path.join(workspaceRoot, rojoProjectPath);
     if (!fs.existsSync(absolute)) return null;
@@ -132,12 +196,17 @@ function parseRojoProject(workspaceRoot, rojoProjectPath) {
     try {
         project = JSON.parse(fs.readFileSync(absolute, 'utf8'));
     } catch (e) {
-        warn(`pathResolver: could not parse Rojo project "${rojoProjectPath}" (${e.message}); the 'game' path style will not resolve.`);
+        warn(`pathResolver: could not parse Rojo project "${rojoProjectPath}" (${errMsg(e)}); the 'game' path style will not resolve.`);
         return null;
     }
     if (!project || typeof project.tree !== 'object') return null;
 
+    /** @type {RojoEntry[]} */
     const map = [];
+    /**
+     * @param {any} node - A raw node of the parsed project tree
+     * @param {string[]} dmSegments
+     */
     function walk(node, dmSegments) {
         if (typeof node !== 'object' || node === null) return;
         const rawPath = node['$path'];
@@ -162,6 +231,11 @@ function parseRojoProject(workspaceRoot, rojoProjectPath) {
 //
 // Separate from refreshContext so the CI checker, which has no VS Code to read settings from,
 // resolves requires exactly as the editor does.
+/**
+ * @param {string} workspaceRoot
+ * @param {{directoriesToScan?: string[], ignoreDirectories?: string[], pathPriority?: string[], rojoProjectPath?: string}} [options]
+ * @returns {ResolverContext}
+ */
 function createContext(workspaceRoot, {
     directoriesToScan = [],
     ignoreDirectories = [],
@@ -169,11 +243,13 @@ function createContext(workspaceRoot, {
     rojoProjectPath = 'default.project.json'
 } = {}) {
     const { basenameMap } = buildBasenameMap(workspaceRoot, { directoriesToScan, ignoreDirectories });
+    /** @type {Record<string, string[]>} */
     const targets = {};
+    /** @type {Set<string>} */
     const targetSet = new Set();
     for (const [basename, arr] of Object.entries(basenameMap)) {
-        targets[basename] = arr.map(entry => entry.path);
-        arr.forEach(entry => targetSet.add(entry.path));
+        targets[basename] = arr.map((/** @type {{path: string}} */ entry) => entry.path);
+        arr.forEach((/** @type {{path: string}} */ entry) => targetSet.add(entry.path));
     }
 
     return {
@@ -189,6 +265,7 @@ function createContext(workspaceRoot, {
 }
 
 // Rebuilds the cached context from the current workspace and settings.
+/** @returns {ResolverContext | null} */
 function refreshContext() {
     if (!vscode || !vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
         _ctx = null;
@@ -210,15 +287,23 @@ function refreshContext() {
 // Collects every .lua/.luau file under the configured scan roots, pruning the same
 // directories alias generation prunes. (Moved here from aliasDiagnostics so explicit-mode
 // features and diagnostics share one copy.)
+/**
+ * @param {string} workspaceRoot
+ * @param {string[]} directoriesToScan
+ * @param {ReturnType<typeof compileIgnorePatterns>} ignorePatterns
+ * @returns {string[]} Absolute file paths
+ */
 function collectSourceFiles(workspaceRoot, directoriesToScan, ignorePatterns) {
+    /** @type {string[]} */
     const files = [];
 
+    /** @param {string} dir */
     function walk(dir) {
         let entries;
         try {
             entries = fs.readdirSync(dir, { withFileTypes: true });
         } catch (e) {
-            debug(`pathResolver: could not read "${dir}" (${e.message})`);
+            debug(`pathResolver: could not read "${dir}" (${errMsg(e)})`);
             return;
         }
 
@@ -250,6 +335,11 @@ function collectSourceFiles(workspaceRoot, directoriesToScan, ignorePatterns) {
 
 // A module path may denote "Foo.luau", "Foo.lua", or a folder with an init file. Probes the
 // index first; falls back to disk for targets outside the scan roots (e.g. Packages/).
+/**
+ * @param {string} modulePath
+ * @param {ResolverContext} ctx
+ * @returns {string | null} Workspace-relative target file path
+ */
 function probeModulePath(modulePath, ctx) {
     if (!modulePath) return null;
     const candidates = [
@@ -270,6 +360,9 @@ function probeModulePath(modulePath, ctx) {
 /**
  * Resolves one require string to the module path it denotes, WITHOUT checking a file exists
  * there. Rename handling needs this to see where a now-dangling require used to point.
+ * @param {string} spec - The require string content, e.g. "@Shared/Stuff/myModule" or "./Sibling"
+ * @param {string} fromFileRel - Workspace-relative path of the file containing the require
+ * @param {ResolverContext} ctx
  * @returns {{status: 'path', modulePath: string}
  *         | {status: 'unverifiable'}
  *         | {status: 'unresolved', reason: string, message: string}}
@@ -306,6 +399,7 @@ function resolveModulePath(spec, fromFileRel, ctx) {
         if (!ctx.rojoMap || rest.length === 0) return { status: 'unverifiable' };
         const dmPath = rest.join('/');
         // Longest dmPath prefix wins, matched on segment boundaries.
+        /** @type {RojoEntry | null} */
         let best = null;
         for (const entry of ctx.rojoMap) {
             if (dmPath === entry.dmPath || dmPath.startsWith(entry.dmPath + '/')) {
@@ -330,7 +424,7 @@ function resolveModulePath(spec, fromFileRel, ctx) {
  * Resolves one require string to a target file (resolveModulePath + existence probe).
  * @param {string} spec - The require string content, e.g. "@Shared/Stuff/myModule" or "./Sibling"
  * @param {string} fromFileRel - Workspace-relative path of the file containing the require
- * @param {object} ctx - Context from refreshContext()
+ * @param {ResolverContext} ctx - Context from refreshContext()
  * @returns {{status: 'resolved', target: string}
  *         | {status: 'unverifiable'}
  *         | {status: 'unresolved', reason: string, message: string}}
@@ -348,11 +442,17 @@ function resolveRequire(spec, fromFileRel, ctx) {
 // Reads each source file under the scan roots, preferring open-editor text so unsaved
 // edits are reflected (and so edit ranges are valid against the live buffer).
 // Returns a Map of absolute file path -> text.
+/**
+ * @param {string} workspaceRoot
+ * @param {ConfigLike} config
+ * @returns {Map<string, string>}
+ */
 function readSourceTexts(workspaceRoot, config) {
     const directoriesToScan = config.get('directoriesToScan') || [];
     const ignorePatterns = compileIgnorePatterns(config.get('ignoreDirectories') || []);
 
     // No editor means no unsaved buffers to prefer; everything comes from disk below.
+    /** @type {Map<string, string>} */
     const openTexts = new Map();
     if (vscode) {
         vscode.workspace.textDocuments.forEach(doc => {
@@ -360,6 +460,7 @@ function readSourceTexts(workspaceRoot, config) {
         });
     }
 
+    /** @type {Map<string, string>} */
     const texts = new Map();
     for (const filePath of collectSourceFiles(workspaceRoot, directoriesToScan, ignorePatterns)) {
         let text = openTexts.get(filePath);
@@ -367,7 +468,7 @@ function readSourceTexts(workspaceRoot, config) {
             try {
                 text = fs.readFileSync(filePath, 'utf8');
             } catch (e) {
-                debug(`pathResolver: could not read "${filePath}" (${e.message})`);
+                debug(`pathResolver: could not read "${filePath}" (${errMsg(e)})`);
                 continue;
             }
         }
@@ -380,6 +481,10 @@ function readSourceTexts(workspaceRoot, config) {
 // Rendering: target file -> require string
 // ---------------------------------------------------------------------------
 
+/**
+ * @param {string} modulePath
+ * @param {string} fromFileRel
+ */
 function renderRelative(modulePath, fromFileRel) {
     const base = segments(baseDir(fromFileRel));
     const moduleSegments = segments(modulePath);
@@ -393,8 +498,15 @@ function renderRelative(modulePath, fromFileRel) {
     return ups > 0 ? '../'.repeat(ups).slice(0, -1) + '/' + downs.join('/') : './' + downs.join('/');
 }
 
+/**
+ * @param {string} modulePath
+ * @param {ResolverContext} ctx
+ * @returns {string | null}
+ */
 function renderAlias(modulePath, ctx) {
+    /** @type {string | null} */
     let bestName = null;
+    /** @type {string | null} */
     let bestValue = null;
     for (const [name, value] of Object.entries(ctx.aliases)) {
         if (modulePath === value || modulePath.startsWith(value + '/')) {
@@ -405,12 +517,19 @@ function renderAlias(modulePath, ctx) {
         }
     }
     if (bestName === null) return null;
-    const remainder = modulePath.slice(bestValue.length).replace(/^\//, '');
+    // bestValue is always set alongside bestName, so it is non-null here.
+    const remainder = modulePath.slice(/** @type {string} */ (bestValue).length).replace(/^\//, '');
     return remainder ? `@${bestName}/${remainder}` : `@${bestName}`;
 }
 
+/**
+ * @param {string} modulePath
+ * @param {ResolverContext} ctx
+ * @returns {string | null}
+ */
 function renderGame(modulePath, ctx) {
     if (!ctx.rojoMap) return null;
+    /** @type {RojoEntry | null} */
     let best = null;
     for (const entry of ctx.rojoMap) {
         if (modulePath === entry.fsPath || modulePath.startsWith(entry.fsPath + '/')) {
@@ -422,6 +541,7 @@ function renderGame(modulePath, ctx) {
     return remainder ? `@game/${best.dmPath}/${remainder}` : `@game/${best.dmPath}`;
 }
 
+/** @param {string} rendered */
 function segmentCount(rendered) {
     return rendered.split('/').length;
 }
@@ -432,7 +552,7 @@ function segmentCount(rendered) {
  * @param {string} fromFileRel - Workspace-relative path of the requiring file
  * @param {'alias'|'relative'|'game'} style
  * @param {boolean} preferRelative - Substitute the relative form when strictly shorter
- * @param {object} ctx
+ * @param {ResolverContext} ctx
  * @returns {string} e.g. "@Shared/Stuff/myModule" or "./myModule"
  */
 function renderRequire(targetRel, fromFileRel, style, preferRelative, ctx) {
@@ -456,6 +576,10 @@ function renderRequire(targetRel, fromFileRel, style, preferRelative, ctx) {
 // Ranking: which candidate is "closest"
 // ---------------------------------------------------------------------------
 
+/**
+ * @param {string} fromFileRel
+ * @param {string} targetRel
+ */
 function treeDistance(fromFileRel, targetRel) {
     const from = segments(fromFileRel).slice(0, -1); // containing dir
     const target = segments(modulePathOf(targetRel));
@@ -463,6 +587,10 @@ function treeDistance(fromFileRel, targetRel) {
     return (from.length - common) + (target.length - common);
 }
 
+/**
+ * @param {string} targetRel
+ * @param {string[]} pathPriority
+ */
 function pathPriorityIndex(targetRel, pathPriority) {
     const index = pathPriority.findIndex(prefix => targetRel.startsWith(prefix));
     return index === -1 ? Infinity : index;
@@ -491,7 +619,12 @@ function rankByDistance(candidates, fromFileRel, pathPriority) {
 
 // Finds every require string in a document's text, with positions for ranges/diagnostics.
 // Full-line comments are skipped so commented-out code is neither flagged nor rewritten.
+/**
+ * @param {string} text
+ * @returns {RequireOccurrence[]}
+ */
 function findRequireStrings(text) {
+    /** @type {RequireOccurrence[]} */
     const found = [];
     text.split(/\r?\n/).forEach((line, lineIndex) => {
         if (line.trimStart().startsWith('--')) return;

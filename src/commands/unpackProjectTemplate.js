@@ -1,11 +1,14 @@
 const fs = require('fs');
 const path = require('path');
 const vscode = require('vscode');
-const { print, warn, error } = require('../core/logger');
+const { print, warn, error, errMsg } = require('../core/logger');
 
 /**
  * Unpacks the project template into the workspace directory.
  * Copies the contents of the ProjectTemplate folder into the workspace.
+ *
+ * @param {vscode.ExtensionContext} context - The extension context
+ * @returns {void}
  */
 function unpackProjectTemplate(context) {
     if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
@@ -66,6 +69,7 @@ function copyTemplateContents(templatePath, workspaceRoot) {
          * @param {string} srcDir - Source directory to copy from
          * @param {string} destDir - Destination directory to copy to
          * @param {string} relativePath - Relative path for logging purposes
+         * @returns {Promise<boolean>} - True once the subtree has been copied
          */
         async function copyRecursive(srcDir, destDir, relativePath = '') {
             const items = fs.readdirSync(srcDir);
@@ -210,9 +214,9 @@ function copyTemplateContents(templatePath, workspaceRoot) {
             }
         })();
 
-    } catch (error) {
-        error('Error copying project template:', error);
-        vscode.window.showErrorMessage(`Failed to copy project template: ${error.message}`);
+    } catch (err) {
+        error('Error copying project template:', err);
+        vscode.window.showErrorMessage(`Failed to copy project template: ${errMsg(err)}`);
     }
 }
 
@@ -223,6 +227,7 @@ function copyTemplateContents(templatePath, workspaceRoot) {
  * @param {string} existingFilePath - Path to the existing file
  * @param {string} relativePath - Relative path for display purposes
  * @param {string | null} [mergedContent] - Optional merged content to write after showing diff
+ * @returns {Promise<void>}
  */
 async function showFileDiff(templateFilePath, existingFilePath, relativePath, mergedContent = null) {
     try {
@@ -248,8 +253,8 @@ async function showFileDiff(templateFilePath, existingFilePath, relativePath, me
             print(`Applied merged content for ${relativePath}`);
         }
         
-    } catch (error) {
-        error('Error showing diff:', error);
+    } catch (err) {
+        error('Error showing diff:', err);
     }
 }
 
@@ -284,7 +289,7 @@ function stripJsonComments(content) {
  * 
  * @param {string} content - JSON/JSONC content to parse
  * @param {string} filePath - File path for error reporting
- * @returns {object|null} - Parsed JSON object or null if parsing failed
+ * @returns {Record<string, any>|null} - Parsed JSON object or null if parsing failed
  */
 function parseJsonWithComments(content, filePath) {
     try {
@@ -298,7 +303,7 @@ function parseJsonWithComments(content, filePath) {
             const strippedContent = stripJsonComments(content);
             return JSON.parse(strippedContent);
         } catch (jsoncError) {
-            warn(`[DEBUG] JSONC parse also failed for ${filePath}:`, jsoncError.message);
+            warn(`[DEBUG] JSONC parse also failed for ${filePath}:`, errMsg(jsoncError));
             return null;
         }
     }
@@ -344,7 +349,7 @@ function isJsonConvertible(filePath) {
         return isConvertible;
         
     } catch (error) {
-        warn(`[DEBUG] Error checking JSON/JSONC convertible for ${filePath}:`, error.message);
+        warn(`[DEBUG] Error checking JSON/JSONC convertible for ${filePath}:`, errMsg(error));
         return false;
     }
 }
@@ -393,8 +398,8 @@ async function mergeJson(templateFilePath, existingFilePath, relativePath) {
         
         return mergedContent;
         
-    } catch (error) {
-        error(`[DEBUG] Error merging JSON/JSONC files for ${relativePath}:`, error);
+    } catch (err) {
+        error(`[DEBUG] Error merging JSON/JSONC files for ${relativePath}:`, err);
         return null;
     }
 }
@@ -402,9 +407,9 @@ async function mergeJson(templateFilePath, existingFilePath, relativePath) {
 /**
  * Deep merges two JSON objects, preserving existing values and adding missing template properties
  * 
- * @param {object} existing - The existing JSON object (takes precedence)
- * @param {object} template - The template JSON object (provides new properties)
- * @returns {object} - The merged JSON object
+ * @param {Record<string, any>} existing - The existing JSON object (takes precedence)
+ * @param {Record<string, any>} template - The template JSON object (provides new properties)
+ * @returns {Record<string, any>} - The merged JSON object
  */
 function deepMergeJson(existing, template) {
     // If existing is not an object or is null, return template
@@ -481,6 +486,7 @@ function showFileChangeNotification(relativePath, originalContent, newContent, c
  * @param {string} originalContent - Original file content
  * @param {string} newContent - New file content
  * @param {string} changeType - Type of change for labeling
+ * @returns {Promise<void>}
  */
 async function showContentDiff(relativePath, originalContent, newContent, changeType) {
     try {
@@ -522,9 +528,9 @@ async function showContentDiff(relativePath, originalContent, newContent, change
             }
         }, 30000); // Clean up after 30 seconds
         
-    } catch (error) {
-        error('Error showing content diff:', error);
-        vscode.window.showErrorMessage(`Failed to show diff for ${relativePath}: ${error.message}`);
+    } catch (err) {
+        error('Error showing content diff:', err);
+        vscode.window.showErrorMessage(`Failed to show diff for ${relativePath}: ${errMsg(err)}`);
     }
 }
 
@@ -561,8 +567,8 @@ async function fallbackJsonMerge(templateContent, existingContent, relativePath)
         // Return the merged content as formatted JSON string
         return JSON.stringify(mergedJson, null, 2);
         
-    } catch (error) {
-        error(`[DEBUG] Error in fallback JSON/JSONC merge for ${relativePath}:`, error);
+    } catch (err) {
+        error(`[DEBUG] Error in fallback JSON/JSONC merge for ${relativePath}:`, err);
         return null;
     }
 }
@@ -603,8 +609,8 @@ async function convertAndMergeJson(templateContent, existingContent, relativePat
         
         return JSON.stringify(mergedJson, null, 2);
         
-    } catch (error) {
-        error(`[DEBUG] Error converting and merging ${relativePath}:`, error);
+    } catch (err) {
+        error(`[DEBUG] Error converting and merging ${relativePath}:`, err);
         return null;
     }
 }
