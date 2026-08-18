@@ -51,3 +51,5 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run test:cli
+      # Perf trend line: grep the PERF_METRICS json in the log. Only generous ceilings fail.
+      - run: node test/perf/bench.js --modules 2000

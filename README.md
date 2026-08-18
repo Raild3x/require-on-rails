@@ -425,6 +425,27 @@ Instance styles need a Rojo sourcemap (`sourcemapPath`, preferred) or project fi
 (`rojoProjectPath`) to place files in the DataModel. Within a cloned container, instance
 chains are emitted `script`-relative (`script.Parent:WaitForChild("X")`) so they follow the clone.
 
+### Continuous conversion while you work
+
+With Build conversion enabled and the extension Active, a watch keeps the output directory
+fresh automatically: saving a file re-converts just that file and writes it **immediately**
+(measured at well under a millisecond per file on a 5,000-module synthetic project), while
+events that can change how *other* files' requires render — renames, alias changes, Rojo
+mapping or settings changes — trigger a full rebuild (~2.5s at that same scale).
+
+Writes are gated on validity, not on a timer. A save whose file the Luau language server
+marks with Error diagnostics is **held** — its last good converted output stays in place —
+so autosave never streams half-typed code at a running `rojo serve`. The hold is brief: it
+ends the moment the errors clear, after a ~2s grace window, or when you switch away from
+VS Code (alt-tab to Studio = about to playtest), whichever comes first — so a file with
+standing type errors still iterates normally rather than being pinned at stale output.
+Without luau-lsp installed the gate simply does not engage. A file whose *requires* do not
+resolve always keeps its last good output regardless; those would crash at runtime, and they
+surface on explicit **Build Project** runs and in Checks.
+
+So you can leave `rojo serve build.project.json` running and playtest the converted output
+continuously — it is always as fresh as your last valid save.
+
 ### Composing external tools (darklua, StyLua, ...)
 
 `require-on-rails.buildConversion.hooks.onBuildCompleted` runs shell commands after each
@@ -599,6 +620,11 @@ These only do anything with Build conversion enabled (see the Build Conversion s
   - **Type**: `array<string>`
   - **Default**: `[]`
   - **Description**: Shell commands run from the workspace root after each successful build, with `ROR_EVENT`, `ROR_OUTPUT_DIR`, and `ROR_BUILD_PROJECT` in the environment. Same approval model as `onAliasesRegenerated` below
+
+* `require-on-rails.buildConversion.hooks.onWatchConverted`:
+  - **Type**: `array<string>`
+  - **Default**: `[]`
+  - **Description**: Shell commands run after each watch conversion batch, with `ROR_CHANGED_FILES` (newline-separated) in the environment. Writes are immediate but hook invocations coalesce behind a short trailing window, so a command here never runs once per keystroke-save. Empty by default so nothing external runs in the watch hot path
 
 ### Post-Processing
 

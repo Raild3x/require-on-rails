@@ -311,6 +311,44 @@ function convertFileText(text, fromRel, ctx, style, importModulePaths, findings)
 // ---------------------------------------------------------------------------
 
 /**
+ * Converts (Lua) or reads (anything else) one file for the output tree. Returns the data to
+ * write at the mirrored path, or null when the file could not be read (finding appended).
+ * Shared by the full build and the incremental watch.
+ * @param {string} workspaceRoot
+ * @param {string} fileRel - Workspace-relative, forward-slashed
+ * @param {ResolverContext} ctx
+ * @param {{outputRequireStyle: OutputRequireStyle, importModulePaths: string|string[]}} options
+ * @param {BuildFinding[]} findings
+ * @returns {{data: string | Buffer, converted: number} | null}
+ */
+function convertOrCopyFile(workspaceRoot, fileRel, ctx, options, findings) {
+    const absolutePath = path.join(workspaceRoot, fileRel);
+    if (!LUA_EXTENSIONS.includes(path.extname(absolutePath))) {
+        try {
+            return { data: fs.readFileSync(absolutePath), converted: 0 };
+        } catch (e) {
+            findings.push({
+                file: fileRel, line: 0, column: 0, endColumn: 0, code: 'read-error',
+                message: `RequireOnRails build: could not read "${fileRel}" (${errMsg(e)}).`
+            });
+            return null;
+        }
+    }
+    let text;
+    try {
+        text = fs.readFileSync(absolutePath, 'utf8');
+    } catch (e) {
+        findings.push({
+            file: fileRel, line: 0, column: 0, endColumn: 0, code: 'read-error',
+            message: `RequireOnRails build: could not read "${fileRel}" (${errMsg(e)}).`
+        });
+        return null;
+    }
+    const result = convertFileText(text, fileRel, ctx, options.outputRequireStyle, options.importModulePaths, findings);
+    return { data: result.text, converted: result.converted };
+}
+
+/**
  * Walks one directory tree, calling back with every file (no ignore pruning: everything in
  * a scanned directory ships, whether or not it is aliased).
  * @param {string} dir
@@ -390,23 +428,14 @@ function runBuild(workspaceRoot, options) {
         walkAllFiles(dirAbs, (absolutePath) => {
             const fileRel = path.relative(workspaceRoot, absolutePath).replace(/\\/g, '/');
             const outPath = path.join(workspaceRoot, outputDirectory, fileRel);
+            const result = convertOrCopyFile(workspaceRoot, fileRel, ctx,
+                { outputRequireStyle, importModulePaths }, findings);
+            if (!result) return;
+            outputs.push({ outPath, data: result.data });
             if (LUA_EXTENSIONS.includes(path.extname(absolutePath))) {
-                let text;
-                try {
-                    text = fs.readFileSync(absolutePath, 'utf8');
-                } catch (e) {
-                    findings.push({
-                        file: fileRel, line: 0, column: 0, endColumn: 0, code: 'read-error',
-                        message: `RequireOnRails build: could not read "${fileRel}" (${errMsg(e)}).`
-                    });
-                    return;
-                }
-                const result = convertFileText(text, fileRel, ctx, outputRequireStyle, importModulePaths, findings);
-                outputs.push({ outPath, data: result.text });
                 filesConverted++;
                 requiresConverted += result.converted;
             } else {
-                outputs.push({ outPath, data: fs.readFileSync(absolutePath) });
                 filesCopied++;
             }
         });
@@ -432,6 +461,8 @@ function runBuild(workspaceRoot, options) {
 
 module.exports = {
     runBuild,
+    convertOrCopyFile,
+    LUA_EXTENSIONS,
     // Exported for tests
     convertFileText,
     clonedContainerOf,

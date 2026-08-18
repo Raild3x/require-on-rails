@@ -20,6 +20,7 @@ const { unpackProjectTemplate } = require('./commands/unpackProjectTemplate');
 const { downloadLuauModule } = require('./commands/downloadLuauModule');
 const { addImportToAllFiles, removeImportFromAllFiles } = require('./features/addImportToFiles');
 const { runBuild } = require('./features/buildProject');
+const { registerBuildWatch, scheduleFullRebuild } = require('./features/buildWatch');
 const { generateBuildProject } = require('./commands/generateBuildProject');
 const { setOutputChannel, print, warn, error, debug } = require('./core/logger');
 const { checkForPackageUpdatesWithSkip, checkForPackageUpdates } = require('./features/packageUpdateChecker');
@@ -155,6 +156,12 @@ function enableEventListeners() {
         eventListenerDisposables.push(...explicitMode.registerExplicitFeatures());
     }
 
+    // Watch pipeline: keeps the converted output fresh while Build conversion is on, so
+    // rojo can serve the build project during playtesting.
+    if (getBuildConversionConfig().enabled) {
+        eventListenerDisposables.push(...registerBuildWatch());
+    }
+
     // Alias *requires* live in file contents, but the .lua/.luau watchers deliberately ignore
     // change events (contents cannot change the alias set), so a save is the only signal that
     // a require was added, removed, or fixed. Only the diagnostics need refreshing here.
@@ -278,6 +285,11 @@ const REWIRE_CONFIG_KEYS = ['mode', 'explicitPathStyle', 'buildConversion.enable
 // rebuilds the in-memory module index instead. generateFileAliases returns undefined when it
 // bails early (no workspace folder, unparseable .luaurc).
 function regenerateAliasesAndDiagnostics() {
+    // Every regeneration means the resolution context changed (alias set, module index, or
+    // Rojo mapping) — which can change the rendered form of requires in files that were not
+    // edited. That is exactly the watch pipeline's full-rebuild boundary.
+    if (isActive && getBuildConversionConfig().enabled) scheduleFullRebuild();
+
     if (getMode() === 'explicit') {
         const ctx = pathResolver.refreshContext();
         if (!ctx) return;

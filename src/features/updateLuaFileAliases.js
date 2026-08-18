@@ -472,7 +472,7 @@ function runHookCommands(settingKey, eventDescription, env) {
 }
 
 // Every hook setting whose workspace-supplied commands go through the shared approval pool.
-const HOOK_SETTING_KEYS = ['onAliasesRegenerated', 'buildConversion.hooks.onBuildCompleted'];
+const HOOK_SETTING_KEYS = ['onAliasesRegenerated', 'buildConversion.hooks.onBuildCompleted', 'buildConversion.hooks.onWatchConverted'];
 
 // Backs the "Manage Alias Regeneration Commands" palette entry. The notification announces
 // itself once per session, so without a way in from the palette a dismissed prompt is

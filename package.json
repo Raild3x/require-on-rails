@@ -289,6 +289,14 @@
           "items": {
             "type": "string"
           }
+        },
+        "require-on-rails.buildConversion.hooks.onWatchConverted": {
+          "type": "array",
+          "default": [],
+          "description": "Shell commands to run after each watch conversion batch, with ROR_EVENT, ROR_OUTPUT_DIR and ROR_CHANGED_FILES (newline-separated) environment variables. Empty by default so nothing external runs in the watch hot path. Workspace-supplied commands need one-time approval, same as onAliasesRegenerated.",
+          "items": {
+            "type": "string"
+          }
         }
       }
     }
@@ -298,6 +306,7 @@
     "playground:reset": "node scripts/reset-playground.js",
     "test:fast": "node ./test/vs-code-extension/runners/runFastTest.js",
     "test:cli": "mocha --ui tdd \"test/cli/**/*.test.js\"",
+    "perf": "node test/perf/bench.js",
     "pretest": "npm run typecheck",
     "typecheck": "tsc --noEmit",
     "vscode:prepublish": "npm run typecheck",
