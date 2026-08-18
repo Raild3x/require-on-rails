@@ -109,7 +109,12 @@
         "require-on-rails.rojoProjectPath": {
           "type": "string",
           "default": "default.project.json",
-          "description": "Explicit mode only: workspace-relative path of the Rojo project file used to map files to DataModel paths for the 'game' path style. Glob $path values and globIgnorePaths are not supported."
+          "description": "Explicit mode only: workspace-relative path of the Rojo project file used to map files to DataModel paths for the 'game' path style. Only used when no sourcemap is found at sourcemapPath. Glob $path values and globIgnorePaths are not supported."
+        },
+        "require-on-rails.sourcemapPath": {
+          "type": "string",
+          "default": "sourcemap.json",
+          "description": "Explicit mode only: workspace-relative path of a Rojo-generated sourcemap, the preferred source for mapping files to DataModel paths for the 'game' path style. Falls back to rojoProjectPath when the file is missing. Keep 'rojo sourcemap --watch' running so newly created files stay resolvable."
         },
         "require-on-rails.startsImmediately": {
           "type": "boolean",

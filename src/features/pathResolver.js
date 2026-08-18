@@ -9,7 +9,7 @@ const { debug, warn, errMsg } = require('../core/logger');
 const { buildBasenameMap, compileIgnorePatterns, findIgnoreMatch } = require('./updateLuaFileAliases');
 
 /**
- * One `$path` node of a Rojo project tree.
+ * One mapped node: a `$path` of a Rojo project tree, or a sourcemap node with a Luau file.
  * @typedef {object} RojoEntry
  * @property {string} fsPath - Extension-stripped, workspace-root-relative filesystem path
  * @property {string} dmPath - Slash-joined DataModel path of the node
@@ -21,7 +21,7 @@ const { buildBasenameMap, compileIgnorePatterns, findIgnoreMatch } = require('./
  * @typedef {object} ResolverContext
  * @property {string} workspaceRoot - Absolute path of the workspace root
  * @property {Record<string, string>} aliases - Bare alias name -> workspace-root-relative path
- * @property {RojoEntry[] | null} rojoMap - null when no Rojo project could be read/parsed
+ * @property {RojoEntry[] | null} rojoMap - null when neither a sourcemap nor a Rojo project could be read/parsed
  * @property {Record<string, string[]>} targets - Basename -> candidate root-relative file paths
  * @property {Set<string>} targetSet - Every indexed root-relative target path
  * @property {string[]} pathPriority - Normalized path prefixes, highest priority first
@@ -225,6 +225,59 @@ function parseRojoProject(workspaceRoot, rojoProjectPath) {
     return map;
 }
 
+// Walks a Rojo-generated sourcemap collecting { fsPath, dmPath } at every node backed by a
+// Luau file. Preferred over parseRojoProject: the sourcemap is Rojo's own fully-expanded
+// output, so globs, $path-less nodes and anything else Rojo computes are already resolved.
+// The root node is the DataModel itself and is excluded from dmPath.
+/**
+ * @param {string} workspaceRoot
+ * @param {string} sourcemapPath
+ * @returns {RojoEntry[] | null}
+ */
+function parseSourcemap(workspaceRoot, sourcemapPath) {
+    const absolute = path.join(workspaceRoot, sourcemapPath);
+    if (!fs.existsSync(absolute)) return null;
+
+    let root;
+    try {
+        root = JSON.parse(fs.readFileSync(absolute, 'utf8'));
+    } catch (e) {
+        warn(`pathResolver: could not parse sourcemap "${sourcemapPath}" (${errMsg(e)}); falling back to the Rojo project file.`);
+        return null;
+    }
+    if (!root || typeof root !== 'object') return null;
+
+    /** @type {RojoEntry[]} */
+    const map = [];
+    /**
+     * @param {any} node - A raw sourcemap node
+     * @param {string[]} dmSegments
+     */
+    function walk(node, dmSegments) {
+        if (typeof node !== 'object' || node === null) return;
+        // filePaths also lists non-Luau members (.project.json, .meta.json); only the script
+        // itself gives a requirable module path.
+        const files = Array.isArray(node.filePaths) ? node.filePaths : [];
+        const luaFile = files.find((/** @type {any} */ f) => typeof f === 'string' && /\.(luau|lua)$/.test(f));
+        if (luaFile) {
+            map.push({
+                fsPath: modulePathOf(normalizeSlashes(luaFile)),
+                dmPath: dmSegments.join('/')
+            });
+        }
+        for (const child of Array.isArray(node.children) ? node.children : []) {
+            if (!child || typeof child.name !== 'string') continue;
+            walk(child, [...dmSegments, child.name]);
+        }
+    }
+    // Start below the root: its name is the project name, not a DataModel path segment.
+    for (const child of Array.isArray(root.children) ? root.children : []) {
+        if (!child || typeof child.name !== 'string') continue;
+        walk(child, [child.name]);
+    }
+    return map;
+}
+
 // Builds a resolution context from a workspace root and plain setting values. Reuses
 // buildBasenameMap so the module index has exactly the same semantics as dynamic mode's alias
 // scan (folder-init collapse, .server/.client skip, ignoreDirectories pruning).
@@ -233,13 +286,14 @@ function parseRojoProject(workspaceRoot, rojoProjectPath) {
 // resolves requires exactly as the editor does.
 /**
  * @param {string} workspaceRoot
- * @param {{directoriesToScan?: string[], ignoreDirectories?: string[], pathPriority?: string[], rojoProjectPath?: string}} [options]
+ * @param {{directoriesToScan?: string[], ignoreDirectories?: string[], pathPriority?: string[], sourcemapPath?: string, rojoProjectPath?: string}} [options]
  * @returns {ResolverContext}
  */
 function createContext(workspaceRoot, {
     directoriesToScan = [],
     ignoreDirectories = [],
     pathPriority = [],
+    sourcemapPath = 'sourcemap.json',
     rojoProjectPath = 'default.project.json'
 } = {}) {
     const { basenameMap } = buildBasenameMap(workspaceRoot, { directoriesToScan, ignoreDirectories });
@@ -255,7 +309,8 @@ function createContext(workspaceRoot, {
     return {
         workspaceRoot,
         aliases: readAliasMap(workspaceRoot),
-        rojoMap: parseRojoProject(workspaceRoot, rojoProjectPath),
+        // Rojo's own sourcemap wins when present; the hand-parsed project file is the fallback.
+        rojoMap: parseSourcemap(workspaceRoot, sourcemapPath) ?? parseRojoProject(workspaceRoot, rojoProjectPath),
         targets,
         targetSet,
         pathPriority: (Array.isArray(pathPriority) ? pathPriority : [])
@@ -278,6 +333,7 @@ function refreshContext() {
         directoriesToScan: config.get('directoriesToScan') || [],
         ignoreDirectories: config.get('ignoreDirectories') || [],
         pathPriority: config.get('pathPriority', []),
+        sourcemapPath: config.get('sourcemapPath', 'sourcemap.json'),
         rojoProjectPath: config.get('rojoProjectPath', 'default.project.json')
     });
     debug(`pathResolver: context refreshed — ${_ctx.targetSet.size} module(s), ${Object.keys(_ctx.aliases).length} alias root(s), rojo entries: ${_ctx.rojoMap ? _ctx.rojoMap.length : 'none'}`);
@@ -663,5 +719,6 @@ module.exports = {
     baseDir,
     modulePathOf,
     treeDistance,
-    parseRojoProject
+    parseRojoProject,
+    parseSourcemap
 };

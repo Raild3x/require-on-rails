@@ -29,7 +29,8 @@ const CONFIG_KEYS = [
     'ignoreDirectories',
     'manualAliases',
     'pathPriority',
-    'rojoProjectPath'
+    'rojoProjectPath',
+    'sourcemapPath'
 ];
 
 // Raised for problems with the run itself (unreadable settings, bad .luaurc) as opposed to
@@ -47,6 +48,7 @@ class ConfigError extends Error {}
  * @property {Object<string, string>} [manualAliases]
  * @property {string[]} [pathPriority]
  * @property {string} [rojoProjectPath]
+ * @property {string} [sourcemapPath]
  */
 
 /**

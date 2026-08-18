@@ -329,7 +329,8 @@ function collectIgnoredSettings() {
         ignored.push(
             { key: 'explicitPathStyle', why },
             { key: 'preferRelativePaths', why },
-            { key: 'rojoProjectPath', why }
+            { key: 'rojoProjectPath', why },
+            { key: 'sourcemapPath', why }
         );
     }
 

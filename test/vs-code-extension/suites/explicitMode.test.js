@@ -265,3 +265,74 @@ suite('Explicit Mode Tests', () => {
         });
     });
 });
+
+// parseSourcemap is pure fs + JSON, so it is tested against a scratch directory rather than
+// the shared workspace above -- which deliberately has no sourcemap.json, so every rojoMap
+// assertion in the suite above is also the fallback-to-project.json test.
+suite('Sourcemap Parsing Tests', () => {
+    let dir;
+
+    const SOURCEMAP = {
+        name: 'Test',
+        className: 'DataModel',
+        filePaths: ['default.project.json'],
+        children: [
+            {
+                name: 'ReplicatedStorage',
+                className: 'ReplicatedStorage',
+                children: [
+                    {
+                        name: 'Shared',
+                        className: 'Folder',
+                        children: [
+                            {
+                                name: 'Data',
+                                className: 'ModuleScript',
+                                filePaths: ['src/Shared/Data/init.luau', 'src/Shared/Data/init.meta.json'],
+                                children: [
+                                    { name: 'Config', className: 'ModuleScript', filePaths: ['src/Shared/Data/Config.luau'] }
+                                ]
+                            }
+                        ]
+                    },
+                    { name: 'Import', className: 'ModuleScript', filePaths: ['src/Import.luau'] }
+                ]
+            }
+        ]
+    };
+
+    suiteSetup(() => {
+        dir = path.join(__dirname, 'sourcemap-test-workspace');
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, 'sourcemap.json'), JSON.stringify(SOURCEMAP));
+        fs.writeFileSync(path.join(dir, 'broken.json'), '{ not json');
+    });
+
+    suiteTeardown(() => {
+        if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    test('Maps every Luau-backed node, skipping containers and non-Luau file paths', () => {
+        const map = pathResolver.parseSourcemap(dir, 'sourcemap.json');
+        const byFs = Object.fromEntries(map.map(entry => [entry.fsPath, entry.dmPath]));
+        assert.strictEqual(byFs['src/Import'], 'ReplicatedStorage/Import', 'File node, extension stripped, root name excluded');
+        assert.strictEqual(byFs['src/Shared/Data'], 'ReplicatedStorage/Shared/Data', 'init file collapses to its folder');
+        assert.strictEqual(byFs['src/Shared/Data/Config'], 'ReplicatedStorage/Shared/Data/Config', 'Child of an init module');
+        assert.strictEqual(map.length, 3, 'Folder/service/DataModel nodes contribute no entry');
+    });
+
+    test('Missing or unparseable sourcemap returns null so the project file can take over', () => {
+        assert.strictEqual(pathResolver.parseSourcemap(dir, 'nope.json'), null);
+        assert.strictEqual(pathResolver.parseSourcemap(dir, 'broken.json'), null);
+    });
+
+    test('Sourcemap takes precedence over the Rojo project file', () => {
+        fs.writeFileSync(path.join(dir, 'default.project.json'), JSON.stringify({
+            name: 'Test',
+            tree: { $className: 'DataModel', Nowhere: { $path: 'src/Nowhere' } }
+        }));
+        const ctx = pathResolver.createContext(dir, { directoriesToScan: [] });
+        assert.ok(ctx.rojoMap.some(entry => entry.fsPath === 'src/Import'), 'Sourcemap entries are used');
+        assert.ok(!ctx.rojoMap.some(entry => entry.fsPath === 'src/Nowhere'), 'Project file is not consulted');
+    });
+});

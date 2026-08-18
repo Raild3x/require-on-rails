@@ -110,7 +110,8 @@ function getExtensionConfig() {
  *   mode: 'dynamic'|'explicit',
  *   explicitPathStyle: 'alias'|'relative'|'game',
  *   preferRelativePaths: boolean,
- *   rojoProjectPath: string
+ *   rojoProjectPath: string,
+ *   sourcemapPath: string
  * }} - Common configuration object
  */
 function getCommonConfig() {
@@ -128,7 +129,8 @@ function getCommonConfig() {
         mode: config.get('mode', 'dynamic'),
         explicitPathStyle: config.get('explicitPathStyle', 'alias'),
         preferRelativePaths: config.get('preferRelativePaths', false),
-        rojoProjectPath: config.get('rojoProjectPath', 'default.project.json')
+        rojoProjectPath: config.get('rojoProjectPath', 'default.project.json'),
+        sourcemapPath: config.get('sourcemapPath', 'sourcemap.json')
     };
 }
 

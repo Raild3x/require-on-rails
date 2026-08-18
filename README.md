@@ -315,9 +315,11 @@ Resolved natively by Roblox. No runtime module, no import boilerplate, no `.luau
 
 **`game`** — `require("@game/ReplicatedStorage/src/Shared/Stuff/MyModule")`
 
-Also resolved natively by Roblox. Paths are mapped from your Rojo project file, found via `require-on-rails.rojoProjectPath` (defaults to `default.project.json`). The mapping is read from each `$path` entry in the project tree.
+Also resolved natively by Roblox. Paths are mapped from a Rojo-generated sourcemap, found via `require-on-rails.sourcemapPath` (defaults to `sourcemap.json`). This is Rojo's own fully-expanded output, so globs and everything else Rojo computes are already resolved for you. Generate it with `rojo sourcemap default.project.json --output sourcemap.json`, and keep `--watch` running so newly created files stay resolvable.
 
-> ⚠️ Glob `$path` values and `globIgnorePaths` are not supported. If a file is only reachable through a glob, `@game` paths to it will not resolve.
+If no sourcemap is found, the Rojo project file at `require-on-rails.rojoProjectPath` (defaults to `default.project.json`) is parsed directly as a fallback.
+
+> ⚠️ In the fallback, glob `$path` values and `globIgnorePaths` are not supported. If a file is only reachable through a glob, `@game` paths to it will not resolve — use a sourcemap instead.
 
 Set `require-on-rails.preferRelativePaths` to `true` to use the relative form whenever it is strictly shorter than the style above, which keeps requires to nearby files short.
 
@@ -479,10 +481,15 @@ These have no effect in dynamic mode.
   - **Default**: `false`
   - **Description**: Write the relative form instead of the styled form whenever it has strictly fewer segments
 
+* `require-on-rails.sourcemapPath`:
+  - **Type**: `string`
+  - **Default**: `"sourcemap.json"`
+  - **Description**: The Rojo-generated sourcemap used to map files to DataModel paths for the `game` path style. Preferred over `rojoProjectPath` whenever the file exists
+
 * `require-on-rails.rojoProjectPath`:
   - **Type**: `string`
   - **Default**: `"default.project.json"`
-  - **Description**: The Rojo project file used to map files to DataModel paths for the `game` path style. Glob `$path` values and `globIgnorePaths` are not supported
+  - **Description**: Fallback used only when no sourcemap is found. Glob `$path` values and `globIgnorePaths` are not supported
 
 ### Post-Processing
 
@@ -684,9 +691,8 @@ Common reasons a file is skipped:
 - Requires on commented-out lines are ignored by design
 
 **Q: `@game/...` paths don't resolve**
-- Check `rojoProjectPath` points at your real Rojo project file
-- The mapping comes from `$path` entries in the project tree; a file only reachable through a glob `$path` cannot be mapped
-- `globIgnorePaths` is not consulted
+- Check `sourcemapPath` points at a sourcemap Rojo actually generated, and regenerate it after creating files (`rojo sourcemap --watch` keeps it current)
+- Without a sourcemap the fallback reads `$path` entries from `rojoProjectPath`; a file only reachable through a glob `$path` cannot be mapped, and `globIgnorePaths` is not consulted
 
 **Q: A setting has a warning squiggle in my `settings.json`**
 - That means the setting does nothing in your current mode or path style — the message names the reason

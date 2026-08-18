@@ -85,12 +85,21 @@ function enableWatchers() {
             print('.luaurc changed, refreshing module index...');
             debouncedGenerateFileAliases();
         });
-        const rojoProjectPath = vscode.workspace.getConfiguration('require-on-rails').get('rojoProjectPath', 'default.project.json');
+        const config = vscode.workspace.getConfiguration('require-on-rails');
         if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
-            createWatcher(new vscode.RelativePattern(vscode.workspace.workspaceFolders[0], rojoProjectPath), true, () => {
-                print('Rojo project changed, refreshing module index...');
-                debouncedGenerateFileAliases();
-            });
+            const folder = vscode.workspace.workspaceFolders[0];
+            // Both are watched: the sourcemap is the preferred source, the project file the
+            // fallback, and either can appear or change at any time. Rojo rewriting the
+            // sourcemap on every save is absorbed by the existing debounce.
+            for (const [label, relativePath] of [
+                ['Rojo project', config.get('rojoProjectPath', 'default.project.json')],
+                ['Rojo sourcemap', config.get('sourcemapPath', 'sourcemap.json')]
+            ]) {
+                createWatcher(new vscode.RelativePattern(folder, relativePath), true, () => {
+                    print(`${label} changed, refreshing module index...`);
+                    debouncedGenerateFileAliases();
+                });
+            }
         }
     }
 }
@@ -254,7 +263,7 @@ const CONTEXTUAL_IMPORT_PLACEHOLDER = '{IMPORT_MODULE_PATH}';
 
 // Settings that change the generated alias set (dynamic) or the module index (explicit),
 // and so must trigger a regeneration.
-const ALIAS_CONFIG_KEYS = ['directoriesToScan', 'ignoreDirectories', 'pathPriority', 'manualAliases', 'preferRelativePaths', 'rojoProjectPath'];
+const ALIAS_CONFIG_KEYS = ['directoriesToScan', 'ignoreDirectories', 'pathPriority', 'manualAliases', 'preferRelativePaths', 'rojoProjectPath', 'sourcemapPath'];
 
 // Settings that change which watchers/listeners/providers should exist, requiring a full
 // feature rewire rather than just a regeneration.
