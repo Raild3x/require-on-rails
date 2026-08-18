@@ -67,6 +67,21 @@
         "command": "require-on-rails.rewriteAllRequires",
         "title": "Rewrite All Requires to Current Style",
         "category": "RequireOnRails"
+      },
+      {
+        "command": "require-on-rails.buildProject",
+        "title": "Build Project",
+        "category": "RequireOnRails"
+      },
+      {
+        "command": "require-on-rails.generateBuildProject",
+        "title": "Generate Build Project File",
+        "category": "RequireOnRails"
+      },
+      {
+        "command": "require-on-rails.removeImportFromAllFiles",
+        "title": "Remove Import Boilerplate From All Files",
+        "category": "RequireOnRails"
       }
     ],
     "configuration": {
@@ -231,6 +246,46 @@
           "type": "array",
           "default": [],
           "description": "Shell commands to run after aliases are regenerated. Each command is executed from the workspace root. Only commands set in your own User settings are ever run; if a workspace sets this, RequireOnRails ignores the commands and notifies you so you can review them and opt in.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "require-on-rails.buildConversion.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable Build conversion: produce a runtime-module-free copy of the project by rewriting alias requires to natively-resolvable forms at build time. Enables the build commands and stops Import boilerplate insertion — the RequireOnRails Luau module is no longer needed."
+        },
+        "require-on-rails.buildConversion.outputDirectory": {
+          "type": "string",
+          "default": "dist",
+          "description": "Workspace-relative directory the Build Project command writes the converted copy of the scanned directories into. Consumed by rojo via the generated build project file. Recommended for .gitignore."
+        },
+        "require-on-rails.buildConversion.outputRequireStyle": {
+          "type": "string",
+          "default": "string",
+          "enum": [
+            "string",
+            "find_first_child",
+            "wait_for_child",
+            "property"
+          ],
+          "enumDescriptions": [
+            "Native string requires: relative within the file's area, @game-rooted where a path crosses out of a cloned container. Note string requires do not wait for replication (use game.Loaded:Wait() or pick wait_for_child).",
+            "Instance expressions using :FindFirstChild(), e.g. require(game:GetService(\"ReplicatedStorage\"):FindFirstChild(\"Shared\")). Requires a Rojo sourcemap or project file.",
+            "Instance expressions using :WaitForChild(), robust against replication timing for client code. Requires a Rojo sourcemap or project file.",
+            "Instance expressions using property indexing, e.g. require(game:GetService(\"ReplicatedStorage\").Shared). Requires a Rojo sourcemap or project file."
+          ],
+          "description": "The require form Build conversion writes into the converted output."
+        },
+        "require-on-rails.buildConversion.buildProjectFile": {
+          "type": "string",
+          "default": "build.project.json",
+          "description": "Workspace-relative path the Generate Build Project File command writes the build Rojo project to (the user's project file with $path entries redirected into the output directory)."
+        },
+        "require-on-rails.buildConversion.hooks.onBuildCompleted": {
+          "type": "array",
+          "default": [],
+          "description": "Shell commands to run after a successful Build Project run, e.g. a darklua or stylua pass over the output directory. Executed from the workspace root with ROR_EVENT, ROR_OUTPUT_DIR and ROR_BUILD_PROJECT environment variables. Workspace-supplied commands need one-time approval, same as onAliasesRegenerated.",
           "items": {
             "type": "string"
           }

@@ -1,0 +1,8 @@
+{
+    // Build-conversion counterpart to ../ci-fixture-explicit. Deliberately broken; do not "fix" it.
+    // Exercises the verify-build dry run and the stale-boilerplate finding.
+    "require-on-rails.mode": "explicit",
+    "require-on-rails.directoriesToScan": ["src"],
+    "require-on-rails.manualAliases": {},
+    "require-on-rails.buildConversion.enabled": true
+}

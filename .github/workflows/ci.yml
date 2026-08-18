@@ -36,6 +36,10 @@ jobs:
           grep -q 'no module found at "src/Shared/Ghost"' explicit.txt
           grep -q '2 finding(s)' explicit.txt
 
+          node src/cli/check.js --working-directory test/ci-fixture-build --warn-only --verify-build | tee build.txt
+          grep -q 'Import boilerplate is unused' build.txt
+          grep -q 'RequireOnRails build: "@Shared/Ghost" does not resolve' build.txt
+
           if node src/cli/check.js --working-directory test/ci-fixture > /dev/null; then
             echo 'FAIL: the checker exited 0 on a project with findings'
             exit 1

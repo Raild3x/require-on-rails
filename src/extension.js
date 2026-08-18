@@ -5,7 +5,8 @@ const {
     setExtensionContext,
     resetAmbiguityNotificationState,
     getAliasCommandApprovalState,
-    setApprovedCommands
+    setApprovedCommands,
+    runHookCommands
 } = require('./features/updateLuaFileAliases');
 const {
     refreshAliasDiagnostics,
@@ -17,10 +18,12 @@ const { updateRequireNames } = require('./features/updateRequireNames');
 const { hideLines, unhideLines } = require('./features/hideLines');
 const { unpackProjectTemplate } = require('./commands/unpackProjectTemplate');
 const { downloadLuauModule } = require('./commands/downloadLuauModule');
-const { addImportToAllFiles } = require('./features/addImportToFiles');
+const { addImportToAllFiles, removeImportFromAllFiles } = require('./features/addImportToFiles');
+const { runBuild } = require('./features/buildProject');
+const { generateBuildProject } = require('./commands/generateBuildProject');
 const { setOutputChannel, print, warn, error, debug } = require('./core/logger');
 const { checkForPackageUpdatesWithSkip, checkForPackageUpdates } = require('./features/packageUpdateChecker');
-const { getMode, runtimeModuleRequired } = require('./utils/workspaceUtils');
+const { getMode, runtimeModuleRequired, getBuildConversionConfig } = require('./utils/workspaceUtils');
 const pathResolver = require('./features/pathResolver');
 const explicitMode = require('./features/explicitMode');
 
@@ -266,8 +269,9 @@ const CONTEXTUAL_IMPORT_PLACEHOLDER = '{IMPORT_MODULE_PATH}';
 const ALIAS_CONFIG_KEYS = ['directoriesToScan', 'ignoreDirectories', 'pathPriority', 'manualAliases', 'preferRelativePaths', 'rojoProjectPath', 'sourcemapPath'];
 
 // Settings that change which watchers/listeners/providers should exist, requiring a full
-// feature rewire rather than just a regeneration.
-const REWIRE_CONFIG_KEYS = ['mode', 'explicitPathStyle'];
+// feature rewire rather than just a regeneration. buildConversion.enabled flips
+// runtimeModuleRequired(), which gates the import-block UI.
+const REWIRE_CONFIG_KEYS = ['mode', 'explicitPathStyle', 'buildConversion.enabled'];
 
 // Every regeneration path goes through here, so alias diagnostics can never drift out of sync
 // with what was just computed. Dynamic mode writes .luaurc; explicit mode NEVER touches it and
@@ -419,11 +423,21 @@ function activate(context) {
         // module, and explicit-path actions only exist in explicit mode.
         const mode = getMode();
         const isExplicit = mode === 'explicit';
+        const buildEnabled = getBuildConversionConfig().enabled;
         const items = /** @type {{label: string, description: string, command: string, args?: string}[]} */ ([
             isActive
                 ? { label: '$(circle-slash) Deactivate', description: 'Turn off RequireOnRails features', command: 'require-on-rails.toggleActive' }
                 : { label: '$(play) Activate', description: 'Turn on RequireOnRails features', command: 'require-on-rails.toggleActive' },
             { label: `$(arrow-swap) Switch Mode (current: ${mode})`, description: 'Choose dynamic alias generation or explicit path writing', command: 'require-on-rails.selectMode' },
+            buildEnabled
+                ? { label: '$(package) Build Project', description: 'Convert requires into the output directory (no runtime module needed)', command: 'require-on-rails.buildProject' }
+                : null,
+            buildEnabled
+                ? { label: '$(json) Generate Build Project File', description: 'Write a Rojo project whose $paths point at the converted output', command: 'require-on-rails.generateBuildProject' }
+                : null,
+            buildEnabled
+                ? { label: '$(clear-all) Remove Import Boilerplate From All Files', description: 'One-time migration: strip the require = Import(script) lines', command: 'require-on-rails.removeImportFromAllFiles' }
+                : null,
             isExplicit
                 ? { label: '$(sync) Rescan Modules', description: 'Refresh the module index and diagnostics, and show the log', command: 'require-on-rails.regenerateAliases' }
                 : { label: '$(sync) Regenerate Aliases', description: 'Force alias regeneration and show the log', command: 'require-on-rails.regenerateAliases' },
@@ -437,8 +451,10 @@ function activate(context) {
             runtimeModuleRequired()
                 ? { label: '$(edit) Add Import Definition to All Files', description: 'Insert the import require def where missing', command: 'require-on-rails.addImportToAllFiles' }
                 : null,
-            !isExplicit
-                ? { label: '$(terminal) Manage Alias Regeneration Commands', description: 'Approve or revoke workspace onAliasesRegenerated commands', command: 'require-on-rails.manageAliasCommands' }
+            // Also relevant in explicit mode once build hooks exist: approvals are shared
+            // across every hook setting.
+            (!isExplicit || buildEnabled)
+                ? { label: '$(terminal) Manage Alias Regeneration Commands', description: 'Approve or revoke workspace hook commands', command: 'require-on-rails.manageAliasCommands' }
                 : null,
             { label: '$(gear) Open Extension Settings', description: 'Open RequireOnRails settings', command: 'workbench.action.openSettings', args: 'require-on-rails' },
             { label: '$(arrow-up) Check for Updates', description: 'Check for RequireOnRails package updates', command: 'require-on-rails.checkForUpdates' },
@@ -474,6 +490,73 @@ function activate(context) {
             return;
         }
         explicitMode.rewriteAllRequires();
+    });
+
+    registerCommand(context, 'require-on-rails.buildProject', () => {
+        if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
+            vscode.window.showWarningMessage('RequireOnRails: Please open a folder first.');
+            return;
+        }
+        const build = getBuildConversionConfig();
+        if (!build.enabled) {
+            vscode.window.showInformationMessage('RequireOnRails: enable require-on-rails.buildConversion.enabled to use Build conversion.');
+            return;
+        }
+        const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
+        const config = vscode.workspace.getConfiguration('require-on-rails');
+
+        /** @type {ReturnType<typeof runBuild>} */
+        let result;
+        try {
+            result = runBuild(workspaceRoot, {
+                directoriesToScan: config.get('directoriesToScan') || [],
+                ignoreDirectories: config.get('ignoreDirectories') || [],
+                pathPriority: config.get('pathPriority', []),
+                rojoProjectPath: config.get('rojoProjectPath', 'default.project.json'),
+                sourcemapPath: config.get('sourcemapPath', 'sourcemap.json'),
+                importModulePaths: config.get('importModulePaths') || [],
+                outputDirectory: build.outputDirectory,
+                outputRequireStyle: build.outputRequireStyle
+            });
+        } catch (e) {
+            error('Build failed unexpectedly:', e);
+            vscode.window.showErrorMessage('RequireOnRails: build failed unexpectedly. See the RequireOnRails output for details.');
+            return;
+        }
+
+        if (result.findings.length > 0) {
+            // Nothing was written: a build with unconvertible requires must fail loudly, not
+            // ship strings that break at runtime.
+            for (const finding of result.findings) {
+                warn(`build: ${finding.file}:${finding.line + 1}  ${finding.message}`);
+            }
+            const showOutput = 'Show Output';
+            vscode.window.showErrorMessage(
+                `RequireOnRails: build failed — ${result.findings.length} require(s) could not be converted. Nothing was written.`,
+                showOutput
+            ).then(choice => { if (choice === showOutput) outputChannel.show(true); });
+            return;
+        }
+
+        vscode.window.showInformationMessage(
+            `RequireOnRails: built ${result.filesConverted} file(s) (${result.requiresConverted} require(s) converted) into ${build.outputDirectory}/.`);
+        runHookCommands('buildConversion.hooks.onBuildCompleted', 'after each project build', {
+            ROR_EVENT: 'build-completed',
+            ROR_OUTPUT_DIR: build.outputDirectory,
+            ROR_BUILD_PROJECT: build.buildProjectFile
+        });
+    });
+
+    registerCommand(context, 'require-on-rails.generateBuildProject', () => {
+        if (!getBuildConversionConfig().enabled) {
+            vscode.window.showInformationMessage('RequireOnRails: enable require-on-rails.buildConversion.enabled to use Build conversion.');
+            return;
+        }
+        generateBuildProject();
+    });
+
+    registerCommand(context, 'require-on-rails.removeImportFromAllFiles', () => {
+        removeImportFromAllFiles();
     });
 
     registerCommand(context, 'require-on-rails.toggleActive', () => {

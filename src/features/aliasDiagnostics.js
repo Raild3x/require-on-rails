@@ -7,8 +7,9 @@ let vscode = null;
 try { vscode = require('vscode'); } catch (e) { /* running outside VS Code */ }
 const { debug, warn, errMsg } = require('../core/logger');
 
-const { getMode, getExplicitPathStyle, runtimeModuleRequired } = require('../utils/workspaceUtils');
+const { getMode, getExplicitPathStyle, runtimeModuleRequired, getBuildConversionConfig } = require('../utils/workspaceUtils');
 const pathResolver = require('./pathResolver');
+const { getImportRequireLineIndexes } = require('./addImportToFiles');
 
 /**
  * Resolution context from pathResolver. Taken from createContext's return type so this stays
@@ -307,6 +308,62 @@ function makeExplicitDiagnostic(found, message) {
     return diagnostic;
 }
 
+// With Build conversion enabled the Import boilerplate serves no purpose (the build rewrites
+// requires into natively-resolvable forms), and converted output must not ship the Wally
+// module — so leftover boilerplate is a finding. Pure, shared with the CI checker.
+const STALE_BOILERPLATE_MESSAGE =
+    'RequireOnRails: this Import boilerplate is unused with Build conversion enabled — the build rewrites requires natively. ' +
+    'Run "RequireOnRails: Remove Import Boilerplate From All Files" to migrate.';
+
+/**
+ * @param {string} text
+ * @param {string|string[]} importModulePaths
+ * @returns {{line: number, startColumn: number, endColumn: number, message: string}[]}
+ */
+function findStaleImportLines(text, importModulePaths) {
+    const lines = text.split('\n');
+    return getImportRequireLineIndexes(text, importModulePaths).map(line => ({
+        line,
+        startColumn: 0,
+        endColumn: lines[line] === undefined ? 0 : lines[line].replace(/\r$/, '').length,
+        message: STALE_BOILERPLATE_MESSAGE
+    }));
+}
+
+// Appends stale-boilerplate warnings on top of whatever the mode-specific refresh already
+// reported for each file.
+/**
+ * @param {string} workspaceRoot
+ * @param {import('vscode').WorkspaceConfiguration} config
+ * @param {import('vscode').DiagnosticCollection} collection
+ */
+function refreshStaleBoilerplateDiagnostics(workspaceRoot, config, collection) {
+    if (!vscode) return;
+    if (!getBuildConversionConfig().enabled) return;
+    const importModulePaths = config.get('importModulePaths') || [];
+
+    for (const [filePath, text] of pathResolver.readSourceTexts(workspaceRoot, config)) {
+        const stale = findStaleImportLines(text, importModulePaths);
+        if (stale.length === 0) continue;
+        const uri = vscode.Uri.file(filePath);
+        const diagnostics = stale.map(found => {
+            if (!vscode) throw new Error('unreachable');
+            const diagnostic = new vscode.Diagnostic(
+                new vscode.Range(
+                    new vscode.Position(found.line, found.startColumn),
+                    new vscode.Position(found.line, found.endColumn)
+                ),
+                found.message,
+                vscode.DiagnosticSeverity.Warning
+            );
+            diagnostic.source = 'RequireOnRails';
+            diagnostic.code = 'stale-boilerplate';
+            return diagnostic;
+        });
+        collection.set(uri, [...(collection.get(uri) || []), ...diagnostics]);
+    }
+}
+
 // Settings that are explicitly set in workspace settings but ignored by the current
 // mode/style get a Warning on .vscode/settings.json. VS Code has no API to conditionally
 // mark a setting invalid, so diagnostics on the settings file are the standard workaround.
@@ -422,6 +479,7 @@ function refreshAliasDiagnostics() {
         ? refreshExplicitDiagnostics(workspaceRoot, config, collection)
         : refreshDynamicDiagnostics(workspaceRoot, config, collection);
 
+    refreshStaleBoilerplateDiagnostics(workspaceRoot, config, collection);
     refreshSettingsDiagnostics(workspaceRoot, collection);
 
     if (!result) return result;
@@ -441,5 +499,6 @@ module.exports = {
     findUnresolvedAliases,
     // Pure detection/reporting, shared with the CI checker so both speak the same words.
     findUnresolvedRequires,
-    unresolvedAliasMessage
+    unresolvedAliasMessage,
+    findStaleImportLines
 };

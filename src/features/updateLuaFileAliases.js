@@ -262,33 +262,35 @@ function scanDir(dir, rootDir, supportedExtensions, ignorePatterns, ignoreList, 
 }
 
 
-// Serialization state for post-regeneration commands.
-// Only one batch of commands runs at a time; if another regeneration fires while commands
-// are in-flight, the latest request is queued (previous pending run is dropped).
+// Serialization state for hook commands (onAliasesRegenerated, buildConversion hooks).
+// Only one batch of commands runs at a time; if another trigger fires while commands are
+// in-flight, the latest request is queued (previous pending run is dropped).
 let _commandsInFlight = false;
-/** @type {{ commands: string[], workspaceRoot: string } | null} */
+/** @type {{ commands: string[], workspaceRoot: string, label: string, env: Record<string, string> } | null} */
 let _pendingRun = null;
 
 /**
  * @param {string[]} commands
  * @param {string} workspaceRoot
+ * @param {string} label - Setting key, for log lines
+ * @param {Record<string, string>} env - Extra environment variables for the commands
  */
-function _runCommandsSerial(commands, workspaceRoot) {
+function _runCommandsSerial(commands, workspaceRoot, label, env) {
     let index = 0;
     function runNext() {
         if (index >= commands.length) {
             _commandsInFlight = false;
             if (_pendingRun) {
-                const { commands: nextCmds, workspaceRoot: nextRoot } = _pendingRun;
+                const next = _pendingRun;
                 _pendingRun = null;
-                _runCommandsSerial(nextCmds, nextRoot);
+                _runCommandsSerial(next.commands, next.workspaceRoot, next.label, next.env);
             }
             return;
         }
         const command = commands[index++];
-        exec(command, { cwd: workspaceRoot }, (err) => {
-            if (err) error(`onAliasesRegenerated command failed: "${command}"`, err.message);
-            else print(`onAliasesRegenerated: ran "${command}"`);
+        exec(command, { cwd: workspaceRoot, env: { ...process.env, ...env } }, (err) => {
+            if (err) error(`${label} command failed: "${command}"`, err.message);
+            else print(`${label}: ran "${command}"`);
             runNext();
         });
     }
@@ -299,13 +301,15 @@ function _runCommandsSerial(commands, workspaceRoot) {
 /**
  * @param {string[]} commands
  * @param {string} workspaceRoot
+ * @param {string} label
+ * @param {Record<string, string>} env
  */
-function _scheduleAliasCommands(commands, workspaceRoot) {
+function _scheduleHookCommands(commands, workspaceRoot, label, env) {
     if (_commandsInFlight) {
-        _pendingRun = { commands, workspaceRoot };
+        _pendingRun = { commands, workspaceRoot, label, env };
         return;
     }
-    _runCommandsSerial(commands, workspaceRoot);
+    _runCommandsSerial(commands, workspaceRoot, label, env);
 }
 
 /**
@@ -316,18 +320,19 @@ function toCommandList(value) {
     return Array.isArray(value) ? value.filter(c => typeof c === 'string' && c.length > 0) : [];
 }
 
-// onAliasesRegenerated only ever runs from the user's own settings, so that opening a
-// repository cannot make RequireOnRails execute arbitrary shell commands. This is enforced
-// here rather than with `"scope": "machine"` in package.json, because VS Code strips
-// machine-scoped values out of the workspace configuration before `inspect()` can see them,
-// and we need to see them in order to tell the user what the workspace was asking for.
+// Hook commands only ever run from the user's own settings, so that opening a repository
+// cannot make RequireOnRails execute arbitrary shell commands. This is enforced here rather
+// than with `"scope": "machine"` in package.json, because VS Code strips machine-scoped
+// values out of the workspace configuration before `inspect()` can see them, and we need to
+// see them in order to tell the user what the workspace was asking for.
 /**
  * @param {import('vscode').WorkspaceConfiguration} config
+ * @param {string} [settingKey]
  * @returns {{ userCommands: string[], workspaceCommands: string[] }}
  */
-function getAliasCommands(config) {
+function getAliasCommands(config, settingKey = 'onAliasesRegenerated') {
     const inspected = /** @type {{ globalValue?: unknown, workspaceValue?: unknown, workspaceFolderValue?: unknown }} */ (
-        config.inspect('onAliasesRegenerated') || {}
+        config.inspect(settingKey) || {}
     );
     return {
         userCommands: toCommandList(inspected.globalValue),
@@ -386,20 +391,22 @@ const _announcedWorkspaceCommands = new Set();
 
 /**
  * @param {string[]} pending
+ * @param {string} settingKey
+ * @param {string} eventDescription - e.g. "after each alias regeneration"
  */
-function announceWorkspaceCommands(pending) {
-    const signature = JSON.stringify(pending);
+function announceWorkspaceCommands(pending, settingKey, eventDescription) {
+    const signature = JSON.stringify([settingKey, pending]);
     if (_announcedWorkspaceCommands.has(signature)) return;
     _announcedWorkspaceCommands.add(signature);
 
-    warn(`This workspace asks to run ${pending.length} command(s) after each alias regeneration, but workspace settings cannot run commands on their own:`);
+    warn(`This workspace asks to run ${pending.length} command(s) ${eventDescription}, but workspace settings cannot run commands on their own:`);
     pending.forEach(c => warn(`    ${c}`));
-    warn('Approve them for this workspace from the notification, or put them in require-on-rails.onAliasesRegenerated in your User settings to run them in every workspace.');
+    warn(`Approve them for this workspace from the notification, or put them in require-on-rails.${settingKey} in your User settings to run them in every workspace.`);
 
     if (!vscode) return;
     const review = 'Review Commands';
     vscode.window.showWarningMessage(
-        `RequireOnRails: this workspace wants to run ${pending.length} command(s) after aliases regenerate. They are being ignored until you approve them.`,
+        `RequireOnRails: this workspace wants to run ${pending.length} command(s) ${eventDescription}. They are being ignored until you approve them.`,
         review,
         'Dismiss'
     ).then(choice => {
@@ -411,7 +418,7 @@ function announceWorkspaceCommands(pending) {
 
         const enable = 'Approve for This Workspace';
         return vscode.window.showWarningMessage(
-            `Run ${pending.length === 1 ? 'this command' : `these ${pending.length} commands`} whenever RequireOnRails regenerates aliases in this workspace?`,
+            `Run ${pending.length === 1 ? 'this command' : `these ${pending.length} commands`} ${eventDescription} in this workspace?`,
             {
                 modal: true,
                 detail: `${pending.join('\n')}\n\nThis workspace supplied them. RequireOnRails has not checked what they do, and they will run with your permissions from the workspace root. The approval applies to this workspace only, and is withdrawn automatically if the commands change.`
@@ -420,9 +427,9 @@ function announceWorkspaceCommands(pending) {
         ).then(confirm => {
             if (confirm !== enable) return;
             return approveCommandsForWorkspace(pending).then(
-                () => vscode.window.showInformationMessage('RequireOnRails: approved for this workspace. They will run on the next alias regeneration.'),
+                () => vscode.window.showInformationMessage('RequireOnRails: approved for this workspace. They will run on the next trigger.'),
                 e => {
-                    error('Failed to store onAliasesRegenerated approval:', e);
+                    error(`Failed to store ${settingKey} approval:`, e);
                     vscode.window.showErrorMessage('RequireOnRails: could not store the approval. See the RequireOnRails output for details.');
                 }
             );
@@ -430,13 +437,59 @@ function announceWorkspaceCommands(pending) {
     });
 }
 
+// Runs one hook's commands: the user's own from User settings unconditionally, workspace-
+// supplied ones only after per-workspace approval, nothing in untrusted workspaces. The
+// shared serial queue keeps batches from different hooks from interleaving.
+/**
+ * @param {string} settingKey - e.g. 'buildConversion.hooks.onBuildCompleted'
+ * @param {string} eventDescription - e.g. "after each project build"
+ * @param {Record<string, string>} env - Extra environment variables (ROR_*)
+ */
+function runHookCommands(settingKey, eventDescription, env) {
+    if (!vscode) return;
+    const config = vscode.workspace.getConfiguration(extenionName);
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!workspaceRoot) return;
+
+    const { userCommands, workspaceCommands } = getAliasCommands(config, settingKey);
+    if (!vscode.workspace.isTrusted) {
+        if (userCommands.length > 0 || workspaceCommands.length > 0) {
+            warn(`${settingKey}: skipping commands in untrusted workspace`);
+        }
+        return;
+    }
+
+    const approved = getApprovedCommands();
+    const pending = workspaceCommands.filter(c => !userCommands.includes(c) && !approved.includes(c));
+    if (pending.length > 0) {
+        announceWorkspaceCommands(pending, settingKey, eventDescription);
+    }
+
+    const toRun = [...userCommands, ...workspaceCommands.filter(c => approved.includes(c))];
+    if (toRun.length > 0) {
+        _scheduleHookCommands(toRun, workspaceRoot, settingKey, env);
+    }
+}
+
+// Every hook setting whose workspace-supplied commands go through the shared approval pool.
+const HOOK_SETTING_KEYS = ['onAliasesRegenerated', 'buildConversion.hooks.onBuildCompleted'];
+
 // Backs the "Manage Alias Regeneration Commands" palette entry. The notification announces
 // itself once per session, so without a way in from the palette a dismissed prompt is
-// unreachable until the window reloads, and an approval can never be withdrawn.
+// unreachable until the window reloads, and an approval can never be withdrawn. Approvals
+// are stored per command string across every hook, so the picker aggregates all hooks.
 function getAliasCommandApprovalState() {
     if (!vscode) throw new Error('getAliasCommandApprovalState requires VS Code.');
     const config = vscode.workspace.getConfiguration(extenionName);
-    const { userCommands, workspaceCommands } = getAliasCommands(config);
+    /** @type {string[]} */
+    const userCommands = [];
+    /** @type {string[]} */
+    const workspaceCommands = [];
+    for (const key of HOOK_SETTING_KEYS) {
+        const forKey = getAliasCommands(config, key);
+        userCommands.push(...forKey.userCommands.filter(c => !userCommands.includes(c)));
+        workspaceCommands.push(...forKey.workspaceCommands.filter(c => !workspaceCommands.includes(c)));
+    }
     return {
         userCommands,
         workspaceCommands,
@@ -713,25 +766,7 @@ function generateFileAliases() {
     // Run post-regeneration scripts. Commands come from the user's own settings (which they
     // chose for every workspace) plus anything they explicitly approved for this workspace.
     // Skipped entirely in untrusted workspaces.
-    const { userCommands, workspaceCommands } = getAliasCommands(config);
-    if (!vscode.workspace.isTrusted) {
-        // Nothing runs and nothing is offered until the workspace is trusted, so that the
-        // trust prompt stays the first gate rather than this one.
-        if (userCommands.length > 0 || workspaceCommands.length > 0) {
-            warn('onAliasesRegenerated: skipping commands in untrusted workspace');
-        }
-    } else {
-        const approved = getApprovedCommands();
-        const pending = workspaceCommands.filter(c => !userCommands.includes(c) && !approved.includes(c));
-        if (pending.length > 0) {
-            announceWorkspaceCommands(pending);
-        }
-
-        const toRun = [...userCommands, ...workspaceCommands.filter(c => approved.includes(c))];
-        if (toRun.length > 0) {
-            _scheduleAliasCommands(toRun, workspaceRoot);
-        }
-    }
+    runHookCommands('onAliasesRegenerated', 'after each alias regeneration', { ROR_EVENT: 'aliases-regenerated' });
 
     return { aliases: compiledAliases, ambiguousAliases };
 }
@@ -744,6 +779,7 @@ module.exports = {
     resetAmbiguityNotificationState,
     getAliasCommandApprovalState,
     setApprovedCommands,
+    runHookCommands,
     // Exported so aliasDiagnostics can prune the same directories with the same semantics,
     // rather than growing a third copy of this matching logic.
     compileIgnorePatterns,

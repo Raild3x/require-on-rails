@@ -370,6 +370,86 @@ This is also the migration path from dynamic mode: switch the mode, then run thi
 
 </details>
 
+## Build Conversion
+
+<details>
+<summary>Ship without the runtime module, keep the short requires</summary>
+
+Build conversion keeps your editing experience exactly as it is — short `@Name` or alias-rooted
+requires, either mode — and produces a converted copy of your code whose requires Roblox
+resolves natively. The RequireOnRails Luau module and its `require = Import(script)`
+boilerplate are no longer needed anywhere: not in source, not in the published game.
+
+### How it works
+
+The **Build Project** command copies every scanned directory into an output directory
+(`dist/` by default, gitignore it) and rewrites each require:
+
+* alias and basename requires become relative strings (`require("../Shared/Stuff/MyModule")`), or
+  instance expressions if you prefer (see `outputRequireStyle` below)
+* requires from a **cloned container** (StarterGui, StarterPack, StarterPlayerScripts,
+  StarterCharacterScripts) that point outside it are game-rooted automatically — cloned
+  scripts run from a different location than they edit at, so a relative path out of the
+  container would break at runtime
+* the Import boilerplate is stripped from the output
+
+A require that cannot be converted **fails the build and nothing is written** — you will
+never playtest a silently half-converted tree.
+
+Your Rojo project keeps pointing at `src/` for editing and the sourcemap; the
+**Generate Build Project File** command writes a `build.project.json` with the scanned
+`$path` entries redirected into the output directory. Point Rojo at it when you want the
+converted output: `rojo serve build.project.json` (playtesting) or
+`rojo build build.project.json` (release).
+
+### Adopting it
+
+1. Set `"require-on-rails.buildConversion.enabled": true`. Boilerplate insertion stops, and
+   existing boilerplate is flagged in the Problems panel.
+2. Run **RequireOnRails: Remove Import Boilerplate From All Files** once to migrate the source tree.
+3. Run **Build Project**, then **Generate Build Project File**.
+4. Use `build.project.json` wherever you previously pointed Rojo at your project for output.
+
+### Choosing an output style
+
+`require-on-rails.buildConversion.outputRequireStyle`:
+
+| Value | Output | Notes |
+| --- | --- | --- |
+| `string` (default) | `require("../Shared/MyModule")` / `require("@game/...")` | Native string requires. They do **not** wait for replication — for client code racing replication, use `game.Loaded:Wait()` or pick `wait_for_child` |
+| `wait_for_child` | `require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("MyModule"))` | Robust against replication timing |
+| `find_first_child` | `...:FindFirstChild("Shared")...` | darklua's default shape |
+| `property` | `require(game:GetService("ReplicatedStorage").Shared.MyModule)` | Shortest instance form |
+
+Instance styles need a Rojo sourcemap (`sourcemapPath`, preferred) or project file
+(`rojoProjectPath`) to place files in the DataModel. Within a cloned container, instance
+chains are emitted `script`-relative (`script.Parent:WaitForChild("X")`) so they follow the clone.
+
+### Composing external tools (darklua, StyLua, ...)
+
+`require-on-rails.buildConversion.hooks.onBuildCompleted` runs shell commands after each
+successful build, with `ROR_EVENT`, `ROR_OUTPUT_DIR`, and `ROR_BUILD_PROJECT` in the
+environment. Workspace-supplied commands need the same one-time approval as
+`onAliasesRegenerated`.
+
+darklua composes cleanly as a post-processor — the build output is valid darklua input:
+
+```jsonc
+// e.g. minify / strip types for release. Install darklua ≥ 0.17 (rokit add seaofvoices/darklua).
+"require-on-rails.buildConversion.hooks.onBuildCompleted": [
+    "darklua process dist dist"
+]
+```
+
+Two darklua caveats worth knowing: its luau require mode needs **darklua ≥ 0.17.0**, and an
+unresolvable require only logs a `WARN` to stderr while exiting 0 — grep its stderr if you
+wire it into CI. (RequireOnRails' own build has already validated every require by that point.)
+
+For continuous darklua transforms without touching the editor's hot path, run
+`darklua process dist out --watch` in a separate terminal.
+
+</details>
+
 ## Extension Settings and Commands
 <details>
 <summary> Show Settings & Commands </summary>
@@ -491,6 +571,35 @@ These have no effect in dynamic mode.
   - **Default**: `"default.project.json"`
   - **Description**: Fallback used only when no sourcemap is found. Glob `$path` values and `globIgnorePaths` are not supported
 
+### Build Conversion Settings
+
+These only do anything with Build conversion enabled (see the Build Conversion section above).
+
+* `require-on-rails.buildConversion.enabled`:
+  - **Type**: `boolean`
+  - **Default**: `false`
+  - **Description**: The Build conversion toggle. Enables the build commands, stops Import boilerplate insertion, and flags leftover boilerplate — the runtime module is no longer used in either mode
+
+* `require-on-rails.buildConversion.outputDirectory`:
+  - **Type**: `string`
+  - **Default**: `"dist"`
+  - **Description**: Where Build Project writes the converted copy of the scanned directories. Fully extension-managed and disposable — add it to `.gitignore`
+
+* `require-on-rails.buildConversion.outputRequireStyle`:
+  - **Type**: `string` (`"string"` | `"find_first_child"` | `"wait_for_child"` | `"property"`)
+  - **Default**: `"string"`
+  - **Description**: The require form written into the converted output. `string` emits native string requires; the other three emit instance-expression chains and need a Rojo sourcemap or project file
+
+* `require-on-rails.buildConversion.buildProjectFile`:
+  - **Type**: `string`
+  - **Default**: `"build.project.json"`
+  - **Description**: Where Generate Build Project File writes the build Rojo project
+
+* `require-on-rails.buildConversion.hooks.onBuildCompleted`:
+  - **Type**: `array<string>`
+  - **Default**: `[]`
+  - **Description**: Shell commands run from the workspace root after each successful build, with `ROR_EVENT`, `ROR_OUTPUT_DIR`, and `ROR_BUILD_PROJECT` in the environment. Same approval model as `onAliasesRegenerated` below
+
 ### Post-Processing
 
 * `require-on-rails.onAliasesRegenerated`:
@@ -545,8 +654,11 @@ All commands are prefixed with `RequireOnRails:` in the palette. The menu hides 
 * **Regenerate Aliases**: Force regeneration of all aliases, or in explicit mode a rescan of the module index (useful for troubleshooting)
 * **Download Luau Module** *(dynamic, or explicit with the `alias` style)*: Download the RequireOnRails Luau module via Wally package manager or as a raw Luau file
 * **Add Import Definition to All Files** *(dynamic, or explicit with the `alias` style)*: Automatically add import require definitions to all files that need them
-* **Manage Alias Regeneration Commands** *(dynamic only)*: Review the `onAliasesRegenerated` commands this workspace requests, and approve or revoke each one for this workspace
+* **Manage Alias Regeneration Commands**: Review the hook commands this workspace requests (`onAliasesRegenerated`, build hooks), and approve or revoke each one for this workspace
 * **Rewrite All Requires to Current Style** *(explicit only)*: Re-render every resolvable require string to the current path style (also the migration path when switching from dynamic mode)
+* **Build Project** *(Build conversion only)*: Convert the scanned directories into the output directory; fails loudly and writes nothing if any require cannot be converted
+* **Generate Build Project File** *(Build conversion only)*: Write a Rojo project whose scanned `$path` entries point at the converted output
+* **Remove Import Boilerplate From All Files** *(Build conversion only)*: One-time migration that strips the `require = Import(script)` lines from every scanned file
 * **Check for Updates**: Check whether a newer RequireOnRails Luau package is available
 
 </details>
@@ -590,6 +702,8 @@ you have not set, so CI and your editor agree about what counts as a problem.
 | Ambiguous aliases | Dynamic | Two or more scanned files share a basename and `pathPriority` picks no winner, so no alias exists and every `require("@Name")` of it fails |
 | Unresolved requires | Both | Dynamic: the alias root is not in the generated alias set. Explicit: the require string resolves to no real file |
 | `.luaurc` drift | Dynamic | A **committed** `.luaurc` no longer matches what regeneration would produce — someone moved files without the extension running |
+| Stale boilerplate | Both | Build conversion is enabled but files still contain the Import boilerplate — a half-migrated project would ship the runtime module anyway |
+| Build conversion failures | Both | Only with `verify-build: 'true'` and Build conversion enabled: dry-runs the actual build and reports every require it cannot convert |
 
 Aliases are always derived from your file tree and settings, never read from `.luaurc`. Dynamic
 mode projects commonly gitignore `.luaurc` because it changes on every file move; if it is not
@@ -601,6 +715,7 @@ committed, the drift check is simply skipped and everything else still works.
 | --- | --- | --- |
 | `working-directory` | `.` | Project root containing `.vscode/settings.json`, relative to the repository root |
 | `warn-only` | `'false'` | Annotate findings but always exit successfully — useful while cleaning up an existing project |
+| `verify-build` | `'false'` | Dry-run the Build conversion and fail on unconvertible requires (no-op unless the project enables `buildConversion`). Still pure Node — no extra tools needed |
 
 Findings fail the job by default. A project that cannot be made clean immediately can start with
 `warn-only: 'true'` and drop it once the annotations are gone. Problems with the run itself — an

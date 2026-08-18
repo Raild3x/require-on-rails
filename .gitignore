@@ -5,3 +5,5 @@ test-playground/
 .env
 roblox.yml
 package-lock.json
+**/adr/**
+CONTEXT.md

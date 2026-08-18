@@ -18,7 +18,8 @@ const path = require('path');
 
 const { buildBasenameMap, classifyBasenames } = require('../features/updateLuaFileAliases');
 const pathResolver = require('../features/pathResolver');
-const { findUnresolvedAliases, findUnresolvedRequires, unresolvedAliasMessage } = require('../features/aliasDiagnostics');
+const { findUnresolvedAliases, findUnresolvedRequires, unresolvedAliasMessage, findStaleImportLines } = require('../features/aliasDiagnostics');
+const { runBuild } = require('../features/buildProject');
 const manifest = require('../../package.json');
 
 // Settings the checks depend on. Everything else the extension contributes is editor
@@ -30,7 +31,10 @@ const CONFIG_KEYS = [
     'manualAliases',
     'pathPriority',
     'rojoProjectPath',
-    'sourcemapPath'
+    'sourcemapPath',
+    'importModulePaths',
+    'buildConversion.enabled',
+    'buildConversion.outputRequireStyle'
 ];
 
 // Raised for problems with the run itself (unreadable settings, bad .luaurc) as opposed to
@@ -308,12 +312,60 @@ function checkLuaurcDrift(workingDir, aliases) {
         `Run "RequireOnRails: Regenerate Aliases" and commit the result, or gitignore .luaurc.`)];
 }
 
+// Build conversion checks: leftover Import boilerplate (a half-migrated project would ship
+// the Wally module anyway), and — only when asked, since it converts every file — a dry-run
+// of the actual build, so a require the build cannot convert fails in CI instead of at
+// runtime. The dry run writes nothing.
+/**
+ * @param {string} workingDir
+ * @param {CheckerConfig} config
+ * @param {boolean} verifyBuild
+ * @returns {Finding[]}
+ */
+function checkBuildConversion(workingDir, config, verifyBuild) {
+    const raw = /** @type {Record<string, any>} */ (config);
+    if (!raw['buildConversion.enabled']) return [];
+
+    /** @type {Finding[]} */
+    const findings = [];
+    const importModulePaths = raw['importModulePaths'] || [];
+
+    for (const [filePath, text] of pathResolver.readSourceTexts(workingDir, asConfigObject(raw))) {
+        const relative = toPosix(path.relative(workingDir, filePath));
+        for (const stale of findStaleImportLines(text, importModulePaths)) {
+            findings.push(makeFinding(relative, stale.line, stale.startColumn, stale.endColumn,
+                'stale-boilerplate', stale.message));
+        }
+    }
+
+    if (verifyBuild) {
+        const result = runBuild(workingDir, {
+            directoriesToScan: raw['directoriesToScan'] || [],
+            ignoreDirectories: raw['ignoreDirectories'] || [],
+            pathPriority: raw['pathPriority'] || [],
+            rojoProjectPath: raw['rojoProjectPath'],
+            sourcemapPath: raw['sourcemapPath'],
+            importModulePaths,
+            outputDirectory: 'dist',
+            outputRequireStyle: raw['buildConversion.outputRequireStyle'] || 'string',
+            dryRun: true
+        });
+        for (const finding of result.findings) {
+            findings.push(makeFinding(finding.file, finding.line, finding.column, finding.endColumn,
+                finding.code, finding.message));
+        }
+    }
+
+    return findings;
+}
+
 /**
  * Runs every check appropriate to the project's mode.
  * @param {string} workingDir - Project root containing .vscode/settings.json
+ * @param {{verifyBuild?: boolean}} [options]
  * @returns {Finding[]} Findings, empty when the project is clean
  */
-function runChecks(workingDir) {
+function runChecks(workingDir, { verifyBuild = false } = {}) {
     const config = loadConfig(workingDir);
 
     // Explicit mode writes full paths into source and never generates aliases, so duplicate
@@ -330,7 +382,7 @@ function runChecks(workingDir) {
                     unresolved.endColumn, 'unresolved-require', unresolved.message));
             }
         }
-        return findings;
+        return [...findings, ...checkBuildConversion(workingDir, config, verifyBuild)];
     }
 
     const { basenameMap } = buildBasenameMap(workingDir, config);
@@ -339,7 +391,8 @@ function runChecks(workingDir) {
     return [
         ...checkAmbiguous(ambiguousAliases),
         ...checkDynamicRequires(workingDir, config, aliases, ambiguousAliases),
-        ...checkLuaurcDrift(workingDir, aliases)
+        ...checkLuaurcDrift(workingDir, aliases),
+        ...checkBuildConversion(workingDir, config, verifyBuild)
     ];
 }
 
@@ -417,6 +470,7 @@ function report(findings, workingDirArg, warnOnly) {
 function main(argv = process.argv.slice(2)) {
     const workingDirArg = getInput('working-directory', argv) || '.';
     const warnOnly = getInput('warn-only', argv) === 'true';
+    const verifyBuild = getInput('verify-build', argv) === 'true';
     const workingDir = path.resolve(process.cwd(), workingDirArg);
 
     if (!fs.existsSync(workingDir)) {
@@ -426,7 +480,7 @@ function main(argv = process.argv.slice(2)) {
 
     let findings;
     try {
-        findings = runChecks(workingDir);
+        findings = runChecks(workingDir, { verifyBuild });
     } catch (e) {
         if (!(e instanceof ConfigError)) throw e;
         console.log(`::error::RequireOnRails: ${escapeData(e.message)}`);

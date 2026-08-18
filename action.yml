@@ -15,6 +15,10 @@ inputs:
     description: 'Report findings as annotations but always exit successfully.'
     required: false
     default: 'false'
+  verify-build:
+    description: 'When buildConversion is enabled in the project settings, additionally dry-run the Build conversion and fail on any require the build cannot convert. Pure Node — no extra tools needed.'
+    required: false
+    default: 'false'
 
 # Plain Node, no dependencies to install and nothing to build: the runner checks this
 # repository out and runs the file directly.
