@@ -3,7 +3,8 @@ const path = require('path');
 const vscode = require('vscode');
 const { print, debug } = require('../core/logger');
 const pathResolver = require('./pathResolver');
-const { getExplicitPathStyle, getExtensionConfig } = require('../utils/workspaceUtils');
+const { getSettings } = require('../utils/workspaceUtils');
+const { asConfigLike } = require('../core/settings');
 
 const LANGUAGES = ['luau', 'lua'];
 
@@ -45,12 +46,12 @@ function getCtx() {
  * @returns {string}
  */
 function renderFor(targetRel, fromRel, ctx) {
-    const config = getExtensionConfig();
+    const settings = getSettings();
     return pathResolver.renderRequire(
         targetRel,
         fromRel,
-        getExplicitPathStyle(),
-        config.get('preferRelativePaths', false),
+        settings['explicitPathStyle'],
+        settings['preferRelativePaths'],
         ctx
     );
 }
@@ -324,7 +325,7 @@ async function handleRenameEventExplicit(files) {
     }
     if (renames.length === 0) return;
 
-    const config = getExtensionConfig();
+    const config = asConfigLike(getSettings());
     const texts = pathResolver.readSourceTexts(workspaceRoot, config);
 
     const inboundEdit = new vscode.WorkspaceEdit();
@@ -425,7 +426,7 @@ async function rewriteAllRequires() {
     const ctx = pathResolver.refreshContext();
     if (!ctx) return;
 
-    const config = getExtensionConfig();
+    const config = asConfigLike(getSettings());
     const workspaceEdit = new vscode.WorkspaceEdit();
     let count = 0;
     const filesTouched = new Set();

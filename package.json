@@ -17,6 +17,12 @@
   ],
   "main": "./src/extension.js",
   "contributes": {
+    "jsonValidation": [
+      {
+        "fileMatch": "requireonrails.json",
+        "url": "./schemas/requireonrails.schema.json"
+      }
+    ],
     "commands": [
       {
         "command": "require-on-rails.openMenu",
@@ -307,6 +313,7 @@
     "test:fast": "node ./test/vs-code-extension/runners/runFastTest.js",
     "test:cli": "mocha --ui tdd \"test/cli/**/*.test.js\"",
     "perf": "node test/perf/bench.js",
+    "schema": "node scripts/generate-settings-schema.js",
     "pretest": "npm run typecheck",
     "typecheck": "tsc --noEmit",
     "vscode:prepublish": "npm run typecheck",

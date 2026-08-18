@@ -6,6 +6,8 @@ try { vscode = require('vscode'); } catch (e) { /* running outside VS Code */ }
 const fs = require('fs');
 const path = require('path');
 const { warn, errMsg } = require('../core/logger');
+const settings = require('../core/settings');
+const { SCHEMA } = require('../core/settingsSchema');
 
 const DEFAULT_CONTEXTUAL_IMPORT_TEMPLATE = [
     'local Import = require({IMPORT_MODULE_PATH})',
@@ -88,12 +90,89 @@ function scanDirectory(dir, supportedExtensions, ignoreDirectories, callback) {
 }
 
 /**
- * Gets the configuration for the extension
+ * Gets the configuration for the extension. Only for the genuinely-editor operations —
+ * inspect() scope checks and config.update() writes. Reads of setting *values* go through
+ * getSettings(), which resolves the full chain including the Project settings file.
  * @returns {import('vscode').WorkspaceConfiguration} - Extension configuration
  */
 function getExtensionConfig() {
     if (!vscode) throw new Error('getExtensionConfig requires VS Code; no settings are available outside the editor.');
     return vscode.workspace.getConfiguration('require-on-rails');
+}
+
+// The editor's settings source: every schema key from the live configuration, which VS Code
+// has already merged across user and workspace scope. Values equal the manifest defaults when
+// unset, which is harmless — the schema defaults match (drift-tested), so precedence is
+// unaffected.
+/** @returns {Record<string, any>} */
+function vscodeOverlay() {
+    const config = getExtensionConfig();
+    /** @type {Record<string, any>} */
+    const overlay = {};
+    for (const key of Object.keys(SCHEMA)) {
+        overlay[key] = config.get(key);
+    }
+    // manualAliases deliberately picks ONE scope instead of config.get's cross-scope object
+    // merge: a workspace's alias map replaces the user's, it does not blend with it.
+    const inspected = config.inspect('manualAliases');
+    if (inspected) {
+        overlay['manualAliases'] = /** @type {Object<string, string>} */ (
+            inspected.workspaceFolderValue
+            ?? inspected.workspaceValue
+            ?? inspected.globalValue
+            ?? inspected.defaultValue
+            ?? {});
+    }
+    return overlay;
+}
+
+// One snapshot per invalidation, because settings reads sit inside per-require loops
+// (explicitMode.renderFor) and hit the filesystem for the project file. extension.js
+// invalidates on configuration changes and requireonrails.json watcher events.
+/** @type {ReturnType<typeof settings.resolveSettings> | null} */
+let _settingsCache = null;
+
+function invalidateSettings() {
+    _settingsCache = null;
+}
+
+/** @returns {ReturnType<typeof settings.resolveSettings>} */
+function getSettingsState() {
+    if (!vscode) throw new Error('getSettingsState requires VS Code; headless callers use resolveSettings directly.');
+    if (!_settingsCache) {
+        _settingsCache = settings.resolveSettings(getWorkspaceRoot(), { overlay: vscodeOverlay() });
+    }
+    return _settingsCache;
+}
+
+/**
+ * The resolved settings chain (Project settings file > editor configuration > defaults) as a
+ * flat dotted-key map. Every schema key is present.
+ * @returns {Record<string, any>}
+ */
+function getSettings() {
+    return getSettingsState().settings;
+}
+
+/** @returns {import('../core/settings').SettingsFinding[]} */
+function getSettingsFindings() {
+    return getSettingsState().findings;
+}
+
+// Error-severity settings findings stop operations (ADR 0004): builds, alias regeneration,
+// and rewrites refuse to run rather than run on a fallback the user did not choose.
+function settingsHaveErrors() {
+    return settings.hasErrorFindings(getSettingsFindings());
+}
+
+/**
+ * The validated values the Project settings file itself supplies (empty when absent). Hook
+ * commands from here are workspace-supplied and go through the same approval gate as
+ * workspace-settings hooks.
+ * @returns {Record<string, any>}
+ */
+function getProjectFileValues() {
+    return getSettingsState().projectValues;
 }
 
 /**
@@ -115,33 +194,33 @@ function getExtensionConfig() {
  * }} - Common configuration object
  */
 function getCommonConfig() {
-    const config = getExtensionConfig();
+    const s = getSettings();
 
     return {
-        directoriesToScan: config.get('directoriesToScan') || [],
-        ignoreDirectories: config.get('ignoreDirectories') || [],
+        directoriesToScan: s['directoriesToScan'] || [],
+        ignoreDirectories: s['ignoreDirectories'] || [],
         supportedExtensions: ['.lua', '.luau'],
-        importModulePaths: config.get('importModulePaths') || [],
-        tryToAddImportRequire: config.get('tryToAddImportRequire', true),
-        preferredImportPlacement: config.get('preferredImportPlacement', 'TopOfFile'),
-        importOpacity: config.get('importOpacity', 0.45),
-        contextualImportTemplate: config.get('contextualImportTemplate', DEFAULT_CONTEXTUAL_IMPORT_TEMPLATE),
-        mode: config.get('mode', 'dynamic'),
-        explicitPathStyle: config.get('explicitPathStyle', 'alias'),
-        preferRelativePaths: config.get('preferRelativePaths', false),
-        rojoProjectPath: config.get('rojoProjectPath', 'default.project.json'),
-        sourcemapPath: config.get('sourcemapPath', 'sourcemap.json')
+        importModulePaths: s['importModulePaths'] || [],
+        tryToAddImportRequire: s['tryToAddImportRequire'],
+        preferredImportPlacement: s['preferredImportPlacement'],
+        importOpacity: s['importOpacity'],
+        contextualImportTemplate: s['contextualImportTemplate'] || DEFAULT_CONTEXTUAL_IMPORT_TEMPLATE,
+        mode: s['mode'],
+        explicitPathStyle: s['explicitPathStyle'],
+        preferRelativePaths: s['preferRelativePaths'],
+        rojoProjectPath: s['rojoProjectPath'],
+        sourcemapPath: s['sourcemapPath']
     };
 }
 
 /** @returns {'dynamic'|'explicit'} */
 function getMode() {
-    return getExtensionConfig().get('mode', 'dynamic');
+    return getSettings()['mode'];
 }
 
 /** @returns {'alias'|'relative'|'game'} */
 function getExplicitPathStyle() {
-    return getExtensionConfig().get('explicitPathStyle', 'alias');
+    return getSettings()['explicitPathStyle'];
 }
 
 /**
@@ -149,12 +228,12 @@ function getExplicitPathStyle() {
  * @returns {{enabled: boolean, outputDirectory: string, outputRequireStyle: 'string'|'find_first_child'|'wait_for_child'|'property', buildProjectFile: string}}
  */
 function getBuildConversionConfig() {
-    const config = getExtensionConfig();
+    const s = getSettings();
     return {
-        enabled: config.get('buildConversion.enabled', false),
-        outputDirectory: config.get('buildConversion.outputDirectory', 'dist'),
-        outputRequireStyle: config.get('buildConversion.outputRequireStyle', 'string'),
-        buildProjectFile: config.get('buildConversion.buildProjectFile', 'build.project.json')
+        enabled: s['buildConversion.enabled'],
+        outputDirectory: s['buildConversion.outputDirectory'],
+        outputRequireStyle: s['buildConversion.outputRequireStyle'],
+        buildProjectFile: s['buildConversion.buildProjectFile']
     };
 }
 
@@ -176,6 +255,11 @@ module.exports = {
     shouldIgnoreDirectory,
     scanDirectory,
     getExtensionConfig,
+    getSettings,
+    getSettingsFindings,
+    settingsHaveErrors,
+    getProjectFileValues,
+    invalidateSettings,
     getCommonConfig,
     getMode,
     getExplicitPathStyle,

@@ -1,0 +1,24 @@
+{
+    "$schema": "https://raw.githubusercontent.com/Raild3x/require-on-rails/master/schemas/requireonrails.schema.json",
+
+    "mode": "dynamic",
+
+    "directoriesToScan": [
+        "src/Server",
+        "src/Client",
+        "src/Shared"
+    ],
+
+    "manualAliases": {
+        "Server": "src/Server",
+        "Client": "src/Client",
+        "Shared": "src/Shared"
+    },
+
+    "importModulePaths": [
+        "game.ReplicatedStorage.src.Import",
+        "ReplicatedStorage.src.Import",
+        "game:GetService(\"ReplicatedStorage\").src.Import",
+        "ReplicatedStorage:FindFirstChild(\"Import\", true)"
+    ]
+}

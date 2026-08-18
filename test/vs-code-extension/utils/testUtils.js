@@ -44,7 +44,13 @@ function createMockConfig(overrides = {}) {
 function mockWorkspaceConfig(testWorkspaceUri, configOverrides = {}) {
     const originalConfig = vscode.workspace.getConfiguration;
     const originalWorkspaceFolders = vscode.workspace.workspaceFolders;
-    
+
+    // Settings are resolved once and cached until something invalidates them. Swapping
+    // getConfiguration fires no configuration event, so the snapshot is dropped by hand —
+    // here and again on restore, so the next test does not inherit these overrides.
+    const { invalidateSettings } = require('../../../src/utils/workspaceUtils');
+    invalidateSettings();
+
     vscode.workspace.getConfiguration = (section) => {
         // If a specific section is requested, filter overrides for that section
         let sectionOverrides = {};
@@ -79,6 +85,7 @@ function mockWorkspaceConfig(testWorkspaceUri, configOverrides = {}) {
             writable: true,
             configurable: true
         });
+        invalidateSettings();
     };
 }
 

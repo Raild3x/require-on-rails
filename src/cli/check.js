@@ -20,39 +20,17 @@ const { buildBasenameMap, classifyBasenames } = require('../features/updateLuaFi
 const pathResolver = require('../features/pathResolver');
 const { findUnresolvedAliases, findUnresolvedRequires, unresolvedAliasMessage, findStaleImportLines } = require('../features/aliasDiagnostics');
 const { runBuild } = require('../features/buildProject');
-const manifest = require('../../package.json');
+const settings = require('../core/settings');
 
-// Settings the checks depend on. Everything else the extension contributes is editor
-// behavior with no bearing on whether the code resolves.
-const CONFIG_KEYS = [
-    'mode',
-    'directoriesToScan',
-    'ignoreDirectories',
-    'manualAliases',
-    'pathPriority',
-    'rojoProjectPath',
-    'sourcemapPath',
-    'importModulePaths',
-    'buildConversion.enabled',
-    'buildConversion.outputRequireStyle'
-];
-
-// Raised for problems with the run itself (unreadable settings, bad .luaurc) as opposed to
-// findings about the code. These fail the job even under warn-only: a checker that could not
-// read its own configuration has not checked anything.
+// Raised for problems with the run itself (an unreadable .luaurc) as opposed to findings
+// about the code. These fail the job even under warn-only: a checker that could not read its
+// own configuration has not checked anything. Unusable *settings* arrive as error findings
+// from resolveSettings instead, and are escalated the same way.
 class ConfigError extends Error {}
 
 /**
- * The settings this checker reads, after per-key fallback to the manifest defaults. Values
- * originate in JSON, so these types are the shape the extension contributes, not a guarantee.
- * @typedef {object} CheckerConfig
- * @property {string} [mode]
- * @property {string[]} [directoriesToScan]
- * @property {string[]} [ignoreDirectories]
- * @property {Object<string, string>} [manualAliases]
- * @property {string[]} [pathPriority]
- * @property {string} [rojoProjectPath]
- * @property {string} [sourcemapPath]
+ * The resolved settings, as a flat dotted-key map. Every schema key is present.
+ * @typedef {Record<string, any>} CheckerConfig
  */
 
 /**
@@ -95,104 +73,23 @@ function getInput(name, argv) {
 // Configuration
 // ---------------------------------------------------------------------------
 
-/**
- * Parses JSON with comments and trailing commas, the dialect VS Code writes settings.json in
- * and Luau accepts for .luaurc. Hand-rolled to keep this package dependency-free.
- * @param {string} text
- * @returns {any} Whatever the document contained
- */
-function parseJsonc(text) {
-    const source = text.replace(/^﻿/, '');
-    let out = '';
-    let inString = false;
-    let inLineComment = false;
-    let inBlockComment = false;
-
-    for (let i = 0; i < source.length; i++) {
-        const char = source[i];
-        const next = source[i + 1];
-
-        if (inLineComment) {
-            if (char === '\n') { inLineComment = false; out += char; }
-            continue;
-        }
-        if (inBlockComment) {
-            if (char === '*' && next === '/') { inBlockComment = false; i++; }
-            continue;
-        }
-        if (inString) {
-            out += char;
-            // A backslash escapes the next character, so a \" does not end the string.
-            if (char === '\\') { out += next; i++; continue; }
-            if (char === '"') inString = false;
-            continue;
-        }
-        if (char === '"') { inString = true; out += char; continue; }
-        if (char === '/' && next === '/') { inLineComment = true; i++; continue; }
-        if (char === '/' && next === '*') { inBlockComment = true; i++; continue; }
-        out += char;
-    }
-
-    return JSON.parse(out.replace(/,(\s*[}\]])/g, '$1'));
-}
-
-// Defaults come from the extension manifest rather than a second copy here, so the checker
-// cannot disagree with the editor about what an unset setting means.
-/**
- * @param {string} key
- * @returns {any} The manifest default, or undefined for a key the manifest does not contribute
- */
-function defaultFor(key) {
-    const property = /** @type {Record<string, {default?: any}>} */ (
-        manifest.contributes.configuration.properties)[`require-on-rails.${key}`];
-    return property ? property.default : undefined;
-}
+const parseJsonc = settings.parseJsonc;
 
 /**
- * Reads `<workingDir>/.vscode/settings.json`, falling back per key to the manifest defaults.
- * VS Code writes settings as flat dotted keys, which is the only form read here.
+ * Resolves the settings chain for a checkout: requireonrails.json > .vscode/settings.json >
+ * defaults. Settings findings (a malformed project file, a wrong-typed value, an unknown key)
+ * are returned alongside so they are reported as findings rather than swallowed.
  * @param {string} workingDir
- * @returns {CheckerConfig}
+ * @returns {{config: CheckerConfig, findings: Finding[], fatal: boolean}}
  */
 function loadConfig(workingDir) {
-    const settingsPath = path.join(workingDir, '.vscode', 'settings.json');
-    /** @type {Record<string, any>} */
-    let settings = {};
-
-    if (fs.existsSync(settingsPath)) {
-        let raw;
-        try {
-            raw = fs.readFileSync(settingsPath, 'utf8');
-        } catch (e) {
-            throw new ConfigError(`could not read ${toPosix(settingsPath)}: ${e instanceof Error ? e.message : String(e)}`);
-        }
-        try {
-            settings = raw.trim() ? parseJsonc(raw) : {};
-        } catch (e) {
-            throw new ConfigError(`could not parse ${toPosix(settingsPath)}: ${e instanceof Error ? e.message : String(e)}`);
-        }
-    } else {
-        console.log(`No ${toPosix(settingsPath)} found — checking with the extension's default settings.`);
-    }
-
-    /** @type {Record<string, any>} */
-    const config = {};
-    for (const key of CONFIG_KEYS) {
-        const value = settings[`require-on-rails.${key}`];
-        config[key] = value === undefined ? defaultFor(key) : value;
-    }
-    return config;
+    const resolved = settings.resolveSettings(workingDir);
+    const findings = resolved.findings.map(f =>
+        makeFinding(f.file, f.line, f.column, f.endColumn, f.code, f.message));
+    return { config: resolved.settings, findings, fatal: settings.hasErrorFindings(resolved.findings) };
 }
 
-// The extension's helpers take a VS Code configuration object; in CI the values are already
-// plain, so this is all of that interface they use.
-/**
- * @param {Record<string, any>} config
- * @returns {import('../features/pathResolver').ConfigLike}
- */
-function asConfigObject(config) {
-    return { get: (key, fallback) => (config[key] === undefined ? fallback : config[key]) };
-}
+const asConfigObject = settings.asConfigLike;
 
 // ---------------------------------------------------------------------------
 // Checks
@@ -339,17 +236,7 @@ function checkBuildConversion(workingDir, config, verifyBuild) {
     }
 
     if (verifyBuild) {
-        const result = runBuild(workingDir, {
-            directoriesToScan: raw['directoriesToScan'] || [],
-            ignoreDirectories: raw['ignoreDirectories'] || [],
-            pathPriority: raw['pathPriority'] || [],
-            rojoProjectPath: raw['rojoProjectPath'],
-            sourcemapPath: raw['sourcemapPath'],
-            importModulePaths,
-            outputDirectory: 'dist',
-            outputRequireStyle: raw['buildConversion.outputRequireStyle'] || 'string',
-            dryRun: true
-        });
+        const result = runBuild(workingDir, settings.buildOptions(raw, { dryRun: true }));
         for (const finding of result.findings) {
             findings.push(makeFinding(finding.file, finding.line, finding.column, finding.endColumn,
                 finding.code, finding.message));
@@ -366,7 +253,11 @@ function checkBuildConversion(workingDir, config, verifyBuild) {
  * @returns {Finding[]} Findings, empty when the project is clean
  */
 function runChecks(workingDir, { verifyBuild = false } = {}) {
-    const config = loadConfig(workingDir);
+    const { config, findings: settingsFindings, fatal } = loadConfig(workingDir);
+
+    // Checking against settings the user did not choose would report confident nonsense, so
+    // an unusable settings file is the whole report.
+    if (fatal) return settingsFindings;
 
     // Explicit mode writes full paths into source and never generates aliases, so duplicate
     // basenames are legal and there is no .luaurc of ours to have drifted. Resolution is the
@@ -382,13 +273,14 @@ function runChecks(workingDir, { verifyBuild = false } = {}) {
                     unresolved.endColumn, 'unresolved-require', unresolved.message));
             }
         }
-        return [...findings, ...checkBuildConversion(workingDir, config, verifyBuild)];
+        return [...settingsFindings, ...findings, ...checkBuildConversion(workingDir, config, verifyBuild)];
     }
 
     const { basenameMap } = buildBasenameMap(workingDir, config);
     const { aliases, ambiguousAliases } = classifyBasenames(basenameMap, config);
 
     return [
+        ...settingsFindings,
         ...checkAmbiguous(ambiguousAliases),
         ...checkDynamicRequires(workingDir, config, aliases, ambiguousAliases),
         ...checkLuaurcDrift(workingDir, aliases),

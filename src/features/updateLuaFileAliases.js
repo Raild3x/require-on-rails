@@ -8,6 +8,12 @@ const { exec } = require('child_process');
 let vscode = null;
 try { vscode = require('vscode'); } catch (e) { /* running outside VS Code */ }
 const { print, warn, error, debug, trace, showOutputChannel } = require('../core/logger');
+// Required lazily inside the editor-only functions: this module is imported headless by the
+// CI checker, and workspaceUtils' settings accessors are editor-only.
+/** @returns {typeof import('../utils/workspaceUtils')} */
+function workspaceUtils() {
+    return require('../utils/workspaceUtils');
+}
 
 const extenionName = 'require-on-rails';
 const supportedExtensions = ['.lua', '.luau'];
@@ -334,9 +340,13 @@ function getAliasCommands(config, settingKey = 'onAliasesRegenerated') {
     const inspected = /** @type {{ globalValue?: unknown, workspaceValue?: unknown, workspaceFolderValue?: unknown }} */ (
         config.inspect(settingKey) || {}
     );
+    // Hooks in the Project settings file are workspace-supplied by definition — the file is
+    // committed — so they join the workspace list and need the same approval (ADR 0004).
+    const fromProjectFile = toCommandList(workspaceUtils().getProjectFileValues()[settingKey]);
+    const workspaceCommands = toCommandList(inspected.workspaceFolderValue ?? inspected.workspaceValue);
     return {
         userCommands: toCommandList(inspected.globalValue),
-        workspaceCommands: toCommandList(inspected.workspaceFolderValue ?? inspected.workspaceValue)
+        workspaceCommands: [...fromProjectFile, ...workspaceCommands.filter(c => !fromProjectFile.includes(c))]
     };
 }
 
@@ -690,7 +700,6 @@ function classifyBasenames(basenameMap, { pathPriority = [], manualAliases = {} 
 // Main function to generate file aliases
 function generateFileAliases() {
     if (!vscode) return;
-    const config = vscode.workspace.getConfiguration(extenionName);
 
     // Check if workspace folders exist
     if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
@@ -700,15 +709,12 @@ function generateFileAliases() {
 
     const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
 
-    const rawPathPriority = /** @type {string[]} */ (config.get('pathPriority', []));
+    // Settings come from the resolved chain (Project settings file > editor config >
+    // defaults), which already picks one scope for manualAliases rather than merging them.
+    const settings = workspaceUtils().getSettings();
+    const rawPathPriority = /** @type {string[]} */ (settings['pathPriority']);
     const pathPriority = Array.isArray(rawPathPriority) ? rawPathPriority : [];
-    const inspectedManualAliases = config.inspect('manualAliases');
-    const manualAliases = /** @type {Object<string, string>} */ ((inspectedManualAliases
-        ? (inspectedManualAliases.workspaceFolderValue
-            ?? inspectedManualAliases.workspaceValue
-            ?? inspectedManualAliases.globalValue
-            ?? inspectedManualAliases.defaultValue)
-        : null) ?? {});
+    const manualAliases = /** @type {Object<string, string>} */ (settings['manualAliases'] ?? {});
     const luaurcPath = getDirPath(workspaceRoot, '.luaurc');
 
     debug(`--- Alias generation started ---`);
@@ -730,8 +736,8 @@ function generateFileAliases() {
     }
 
     const { basenameMap, rootDirs } = buildBasenameMap(workspaceRoot, {
-        directoriesToScan: /** @type {string[]} */ (config.get('directoriesToScan') || []),
-        ignoreDirectories: /** @type {string[]} */ (config.get('ignoreDirectories') || [])
+        directoriesToScan: /** @type {string[]} */ (settings['directoriesToScan'] || []),
+        ignoreDirectories: /** @type {string[]} */ (settings['ignoreDirectories'] || [])
     });
 
     const { aliases: compiledAliases, ambiguousAliases, shadowedByManual } =

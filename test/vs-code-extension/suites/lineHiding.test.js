@@ -5,6 +5,7 @@ const fs = require('fs');
 
 // Import extension modules for testing
 const { hideLines } = require('../../../src/features/hideLines');
+const { invalidateSettings } = require('../../../src/utils/workspaceUtils');
 
 // Import shared test utilities
 const {
@@ -194,15 +195,19 @@ return MyModule
         vscode.workspace.getConfiguration = () => createMockConfig({
             tryToAddImportRequire: false
         });
+        // Settings are cached until invalidated; swapping getConfiguration by hand fires no
+        // configuration event, which is what does the invalidating in the real editor.
+        invalidateSettings();
 
         try {
             const mockEditor = createMockEditor('luau', testContent);
             hideLines(mockEditor);
-            
+
             assert.strictEqual(messages.captured.warning.length, 0, 'Should not prompt when tryToAddImportRequire is disabled');
         } finally {
             messages.restore();
             vscode.workspace.getConfiguration = originalConfig;
+            invalidateSettings();
         }
     });
 });

@@ -5,7 +5,8 @@ const { warn, debug } = require('../core/logger');
 const pathResolver = require('./pathResolver');
 const { runBuild, convertOrCopyFile } = require('./buildProject');
 const { runHookCommands } = require('./updateLuaFileAliases');
-const { getExtensionConfig, getBuildConversionConfig } = require('../utils/workspaceUtils');
+const { getSettings, getBuildConversionConfig, settingsHaveErrors } = require('../utils/workspaceUtils');
+const settings = require('../core/settings');
 
 // Watch pipeline: keeps the Build conversion output directory continuously fresh, so
 // `rojo serve build.project.json` playtesting never sees stale code.
@@ -74,7 +75,7 @@ function underScannedDirs(rel, scannedDirs) {
 
 /** @returns {string[]} */
 function getScannedDirs() {
-    const dirs = getExtensionConfig().get('directoriesToScan') || [];
+    const dirs = getSettings()['directoriesToScan'] || [];
     return (Array.isArray(dirs) ? dirs : [])
         .map(d => String(d).replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/$/, ''));
 }
@@ -87,17 +88,9 @@ function hasLuauErrors(uri) {
         d.severity === vscode.DiagnosticSeverity.Error && typeof d.source === 'string' && /luau/i.test(d.source));
 }
 
-/** @returns {{directoriesToScan: string[], ignoreDirectories: string[], pathPriority: string[], rojoProjectPath: string, sourcemapPath: string, importModulePaths: string[]}} */
+/** @returns {import('./buildProject').BuildOptions} */
 function buildOptionsFromConfig() {
-    const config = getExtensionConfig();
-    return {
-        directoriesToScan: config.get('directoriesToScan') || [],
-        ignoreDirectories: config.get('ignoreDirectories') || [],
-        pathPriority: config.get('pathPriority', []),
-        rojoProjectPath: config.get('rojoProjectPath', 'default.project.json'),
-        sourcemapPath: config.get('sourcemapPath', 'sourcemap.json'),
-        importModulePaths: config.get('importModulePaths') || []
-    };
+    return settings.buildOptions(getSettings());
 }
 
 /** @param {string} rel */
@@ -116,6 +109,7 @@ function clearHold(rel) {
 function attemptWrite(rel, { ignoreDiagnostics = false } = {}) {
     const workspaceRoot = getWorkspaceRoot();
     if (!workspaceRoot) return;
+    if (settingsHaveErrors()) return;
     const build = getBuildConversionConfig();
     if (!build.enabled) return;
 
@@ -133,7 +127,7 @@ function attemptWrite(rel, { ignoreDiagnostics = false } = {}) {
     if (!ctx) return;
     const result = convertOrCopyFile(workspaceRoot, rel, ctx, {
         outputRequireStyle: build.outputRequireStyle,
-        importModulePaths: buildOptionsFromConfig().importModulePaths
+        importModulePaths: getSettings()['importModulePaths'] || []
     }, findings);
     if (!result || findings.length > 0) {
         clearHold(rel);
@@ -252,17 +246,16 @@ function runFullRebuild() {
     _fullRebuildPending = false;
     const workspaceRoot = getWorkspaceRoot();
     if (!workspaceRoot) return;
+    // Unusable settings keep the last good output rather than converting against values the
+    // user did not choose; extension.js has already reported the findings.
+    if (settingsHaveErrors()) return;
     const build = getBuildConversionConfig();
     if (!build.enabled) return;
 
     for (const rel of [..._held.keys()]) clearHold(rel);
     _deleted.clear();
 
-    const result = runBuild(workspaceRoot, {
-        ...buildOptionsFromConfig(),
-        outputDirectory: build.outputDirectory,
-        outputRequireStyle: build.outputRequireStyle
-    });
+    const result = runBuild(workspaceRoot, buildOptionsFromConfig());
     if (result.findings.length > 0) {
         // Quiet by design: the previous output stays in place, and the findings will
         // surface with full detail on the next explicit build or Check.

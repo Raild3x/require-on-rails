@@ -7,6 +7,7 @@ const {
     hasValidImportRequire,
     getImportRequireLineIndexes
 } = require('./addImportToFiles');
+const { getSettings } = require('../utils/workspaceUtils');
 
 // Store decoration types globally to properly dispose of them
 /** @type {vscode.TextEditorDecorationType | null} */
@@ -40,11 +41,11 @@ function hideLines(editor) {
 
 
 
-    const config = vscode.workspace.getConfiguration('require-on-rails');
-    const importModulePaths = /** @type {string[]} */ (config.get("importModulePaths", []));
+    const settings = getSettings();
+    const importModulePaths = /** @type {string[]} */ (settings['importModulePaths'] || []);
     const pathsArray = Array.isArray(importModulePaths) ? importModulePaths : [importModulePaths];
     const defaultImportModulePath = pathsArray[0];
-    const tryToAddImportRequire = config.get("tryToAddImportRequire", true);
+    const tryToAddImportRequire = settings['tryToAddImportRequire'];
 
     // Use the centralized function to check for valid import require definitions
     const hasValidImport = hasValidImportRequire(text, importModulePaths);
@@ -71,8 +72,8 @@ function hideLines(editor) {
         ).then((selection) => {
             if (selection === 'Yes') {
                 const filePath = editor.document.fileName;
-                const preferredImportPlacement = /** @type {string} */ (config.get("preferredImportPlacement", 'TopOfFile'));
-                const contextualImportTemplate = /** @type {string|undefined} */ (config.get("contextualImportTemplate"));
+                const preferredImportPlacement = /** @type {string} */ (settings['preferredImportPlacement']);
+                const contextualImportTemplate = /** @type {string|undefined} */ (settings['contextualImportTemplate']);
 
                 if (!defaultImportModulePath) {
                     vscode.window.showWarningMessage('RequireOnRails: No import module path configured.');
@@ -94,7 +95,7 @@ function hideLines(editor) {
     }
 
     // Create new decoration type
-    const importOpacity = config.get("importOpacity", 0.45);
+    const importOpacity = settings['importOpacity'];
     currentDecorationType = vscode.window.createTextEditorDecorationType({
         opacity: importOpacity.toString(), // Makes the text nearly invisible
     });

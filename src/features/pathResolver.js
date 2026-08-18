@@ -7,6 +7,8 @@ let vscode = null;
 try { vscode = require('vscode'); } catch (e) { /* running outside VS Code */ }
 const { debug, warn, errMsg } = require('../core/logger');
 const { buildBasenameMap, compileIgnorePatterns, findIgnoreMatch } = require('./updateLuaFileAliases');
+const { resolverOptions } = require('../core/settings');
+const { getSettings } = require('../utils/workspaceUtils');
 
 /**
  * One mapped node: a `$path` of a Rojo project tree, or a sourcemap node with a Luau file.
@@ -327,15 +329,9 @@ function refreshContext() {
         return null;
     }
     const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
-    const config = vscode.workspace.getConfiguration('require-on-rails');
-
-    _ctx = createContext(workspaceRoot, {
-        directoriesToScan: config.get('directoriesToScan') || [],
-        ignoreDirectories: config.get('ignoreDirectories') || [],
-        pathPriority: config.get('pathPriority', []),
-        sourcemapPath: config.get('sourcemapPath', 'sourcemap.json'),
-        rojoProjectPath: config.get('rojoProjectPath', 'default.project.json')
-    });
+    // Settings come from the resolved chain (Project settings file > editor config > defaults),
+    // so the editor's index is built from exactly the values the CLI and the action would use.
+    _ctx = createContext(workspaceRoot, resolverOptions(getSettings()));
     debug(`pathResolver: context refreshed — ${_ctx.targetSet.size} module(s), ${Object.keys(_ctx.aliases).length} alias root(s), rojo entries: ${_ctx.rojoMap ? _ctx.rojoMap.length : 'none'}`);
     return _ctx;
 }

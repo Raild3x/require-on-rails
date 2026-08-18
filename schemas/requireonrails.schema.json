@@ -1,0 +1,194 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "RequireOnRails project settings",
+    "description": "Project-level settings for RequireOnRails (requireonrails.json). Keys set here win over .vscode/settings.json; unset keys fall back to it, then to the shipped defaults.",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+        "$schema": {
+            "type": "string"
+        },
+        "mode": {
+            "type": "string",
+            "enum": [
+                "dynamic",
+                "explicit"
+            ],
+            "default": "dynamic",
+            "description": "How requires are resolved. 'dynamic' generates basename aliases resolved at runtime; 'explicit' writes full, statically-resolvable paths into your source at edit time."
+        },
+        "explicitPathStyle": {
+            "type": "string",
+            "enum": [
+                "alias",
+                "relative",
+                "game"
+            ],
+            "default": "alias",
+            "description": "Explicit mode only: the form written when RequireOnRails completes or rewrites a require path."
+        },
+        "preferRelativePaths": {
+            "type": "boolean",
+            "default": false,
+            "description": "Explicit mode only: when the relative form of a path has strictly fewer segments than the configured explicitPathStyle form, write the relative form instead."
+        },
+        "rojoProjectPath": {
+            "type": "string",
+            "default": "default.project.json",
+            "description": "Explicit mode only: workspace-relative path of the Rojo project file used to map files to DataModel paths for the 'game' path style. Only used when no sourcemap is found at sourcemapPath. Glob $path values and globIgnorePaths are not supported."
+        },
+        "sourcemapPath": {
+            "type": "string",
+            "default": "sourcemap.json",
+            "description": "Explicit mode only: workspace-relative path of a Rojo-generated sourcemap, the preferred source for mapping files to DataModel paths for the 'game' path style. Falls back to rojoProjectPath when the file is missing. Keep 'rojo sourcemap --watch' running so newly created files stay resolvable."
+        },
+        "enableAbsolutePathUpdates": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether to prompt for updating absolute require paths when files are moved between different alias directories."
+        },
+        "enableFileNameCollisionResolution": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether to detect and handle filename collisions by automatically renaming files with '_Duplicate' suffix."
+        },
+        "enableBasenameUpdates": {
+            "type": "boolean",
+            "default": true,
+            "description": "Whether to prompt for updating basename require statements when files are renamed."
+        },
+        "importModulePaths": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "default": [
+                "game.ReplicatedStorage.src.Import",
+                "ReplicatedStorage.src.Import",
+                "game:GetService(\"ReplicatedStorage\").src.Import",
+                "game:GetService(\"ReplicatedStorage\"):FindFirstChild(\"Import\", true)",
+                "ReplicatedStorage:FindFirstChild(\"Import\", true)"
+            ],
+            "description": "The valid values for the `require` override. This is used to generate the contextual import statements. Uses the first value in the array as the default import path if one is not found."
+        },
+        "contextualImportTemplate": {
+            "type": "string",
+            "default": "local Import = require({IMPORT_MODULE_PATH})\nrequire = Import(script)",
+            "description": "Template used when inserting contextual import code. Must include {IMPORT_MODULE_PATH} placeholder."
+        },
+        "preferredImportPlacement": {
+            "type": "string",
+            "enum": [
+                "TopOfFile",
+                "BeforeFirstRequire",
+                "AfterDefiningRobloxServices"
+            ],
+            "default": "TopOfFile",
+            "description": "Controls where the import require definition is placed when automatically added to files"
+        },
+        "directoriesToScan": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "default": [
+                "src/Server",
+                "src/Client",
+                "src/Shared"
+            ],
+            "description": "Directories to scan for generating Luau file aliases. Relative to the workspace root."
+        },
+        "ignoreDirectories": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "default": [
+                "^_.*"
+            ],
+            "description": "Regex patterns for directories/files to ignore when scanning for Luau files to generate aliases. By default uses '^_.*' to ignore anything prefixed with an underscore."
+        },
+        "manualAliases": {
+            "type": "object",
+            "additionalProperties": {
+                "type": "string"
+            },
+            "default": {
+                "Server": "src/Server",
+                "Client": "src/Client",
+                "Shared": "src/Shared"
+            },
+            "description": "Manual aliases for absolute path support. Maps alias names to their corresponding directory paths (relative to workspace root)."
+        },
+        "pathPriority": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "default": [],
+            "description": "Ordered path prefixes used to resolve ambiguous auto-generated aliases. Earlier entries are higher priority. An ambiguous basename is resolved only when exactly one candidate matches the highest-priority matched prefix; if multiple candidates match that same highest-priority prefix, it remains ambiguous."
+        },
+        "onAliasesRegenerated": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "default": [],
+            "description": "Shell commands to run after aliases are regenerated. Each command is executed from the workspace root. Only commands set in your own User settings are ever run; if a workspace sets this, RequireOnRails ignores the commands and notifies you so you can review them and opt in."
+        },
+        "buildConversion": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "enabled": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Enable Build conversion: produce a runtime-module-free copy of the project by rewriting alias requires to natively-resolvable forms at build time. Enables the build commands and stops Import boilerplate insertion — the RequireOnRails Luau module is no longer needed."
+                },
+                "outputDirectory": {
+                    "type": "string",
+                    "default": "dist",
+                    "description": "Workspace-relative directory the Build Project command writes the converted copy of the scanned directories into. Consumed by rojo via the generated build project file. Recommended for .gitignore."
+                },
+                "outputRequireStyle": {
+                    "type": "string",
+                    "enum": [
+                        "string",
+                        "find_first_child",
+                        "wait_for_child",
+                        "property"
+                    ],
+                    "default": "string",
+                    "description": "The require form Build conversion writes into the converted output."
+                },
+                "buildProjectFile": {
+                    "type": "string",
+                    "default": "build.project.json",
+                    "description": "Workspace-relative path the Generate Build Project File command writes the build Rojo project to (the user's project file with $path entries redirected into the output directory)."
+                },
+                "hooks": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "onBuildCompleted": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "default": [],
+                            "description": "Shell commands to run after a successful Build Project run, e.g. a darklua or stylua pass over the output directory. Executed from the workspace root with ROR_EVENT, ROR_OUTPUT_DIR and ROR_BUILD_PROJECT environment variables. Workspace-supplied commands need one-time approval, same as onAliasesRegenerated."
+                        },
+                        "onWatchConverted": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "default": [],
+                            "description": "Shell commands to run after each watch conversion batch, with ROR_EVENT, ROR_OUTPUT_DIR and ROR_CHANGED_FILES (newline-separated) environment variables. Empty by default so nothing external runs in the watch hot path. Workspace-supplied commands need one-time approval, same as onAliasesRegenerated."
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

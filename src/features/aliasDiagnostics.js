@@ -7,7 +7,8 @@ let vscode = null;
 try { vscode = require('vscode'); } catch (e) { /* running outside VS Code */ }
 const { debug, warn, errMsg } = require('../core/logger');
 
-const { getMode, getExplicitPathStyle, runtimeModuleRequired, getBuildConversionConfig } = require('../utils/workspaceUtils');
+const { getMode, getExplicitPathStyle, runtimeModuleRequired, getBuildConversionConfig, getSettings, getSettingsFindings, settingsHaveErrors } = require('../utils/workspaceUtils');
+const { PROJECT_SETTINGS_FILE, asConfigLike } = require('../core/settings');
 const pathResolver = require('./pathResolver');
 const { getImportRequireLineIndexes } = require('./addImportToFiles');
 
@@ -187,7 +188,7 @@ function buildDiagnostic(unresolved) {
 // Dynamic mode: re-reads .luaurc and reports requires whose alias root is missing.
 /**
  * @param {string} workspaceRoot
- * @param {import('vscode').WorkspaceConfiguration} config
+ * @param {import('./pathResolver').ConfigLike} config
  * @param {import('vscode').DiagnosticCollection} collection
  * @returns {RefreshCounts | undefined}
  */
@@ -261,7 +262,7 @@ function findUnresolvedRequires(text, fromFileRel, ctx) {
 // Explicit mode: full-resolution validation of every require string in the workspace.
 /**
  * @param {string} workspaceRoot
- * @param {import('vscode').WorkspaceConfiguration} config
+ * @param {import('./pathResolver').ConfigLike} config
  * @param {import('vscode').DiagnosticCollection} collection
  * @returns {RefreshCounts | undefined}
  */
@@ -334,13 +335,13 @@ function findStaleImportLines(text, importModulePaths) {
 // reported for each file.
 /**
  * @param {string} workspaceRoot
- * @param {import('vscode').WorkspaceConfiguration} config
+ * @param {import('./pathResolver').ConfigLike} config
  * @param {import('vscode').DiagnosticCollection} collection
  */
 function refreshStaleBoilerplateDiagnostics(workspaceRoot, config, collection) {
     if (!vscode) return;
     if (!getBuildConversionConfig().enabled) return;
-    const importModulePaths = config.get('importModulePaths') || [];
+    const importModulePaths = getSettings()['importModulePaths'] || [];
 
     for (const [filePath, text] of pathResolver.readSourceTexts(workspaceRoot, config)) {
         const stale = findStaleImportLines(text, importModulePaths);
@@ -398,6 +399,38 @@ function collectIgnoredSettings() {
     }
 
     return ignored;
+}
+
+// The Settings module's own findings (a malformed Project settings file, a wrong-typed value,
+// an unknown key), rendered where the user is editing them. Same words as the CLI reports.
+/**
+ * @param {string} workspaceRoot
+ * @param {import('vscode').DiagnosticCollection} collection
+ */
+function refreshSettingsFindingDiagnostics(workspaceRoot, collection) {
+    if (!vscode) return;
+    /** @type {Map<string, import('vscode').Diagnostic[]>} */
+    const byFile = new Map();
+    // Always clear, so a fixed file loses its squiggle even when nothing is wrong now.
+    byFile.set(PROJECT_SETTINGS_FILE, []);
+
+    for (const finding of getSettingsFindings()) {
+        const diagnostic = new vscode.Diagnostic(
+            new vscode.Range(
+                new vscode.Position(finding.line, finding.column),
+                new vscode.Position(finding.line, finding.endColumn)
+            ),
+            finding.message,
+            finding.severity === 'error' ? vscode.DiagnosticSeverity.Error : vscode.DiagnosticSeverity.Warning
+        );
+        diagnostic.source = 'RequireOnRails';
+        diagnostic.code = finding.code;
+        byFile.set(finding.file, [...(byFile.get(finding.file) || []), diagnostic]);
+    }
+
+    for (const [file, diagnostics] of byFile) {
+        collection.set(vscode.Uri.file(path.join(workspaceRoot, file)), diagnostics);
+    }
 }
 
 /**
@@ -472,8 +505,15 @@ function refreshAliasDiagnostics() {
     if (!vscode || !vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) return;
 
     const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
-    const config = vscode.workspace.getConfiguration('require-on-rails');
+    // The resolved chain, so source scanning honors the Project settings file.
+    const config = asConfigLike(getSettings());
     const collection = getCollection();
+
+    refreshSettingsFindingDiagnostics(workspaceRoot, collection);
+
+    // Requires cannot be judged against settings that did not resolve; the findings above are
+    // the report until the settings file is fixed.
+    if (settingsHaveErrors()) return;
 
     const result = getMode() === 'explicit'
         ? refreshExplicitDiagnostics(workspaceRoot, config, collection)

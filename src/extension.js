@@ -24,7 +24,16 @@ const { registerBuildWatch, scheduleFullRebuild } = require('./features/buildWat
 const { generateBuildProject } = require('./commands/generateBuildProject');
 const { setOutputChannel, print, warn, error, debug } = require('./core/logger');
 const { checkForPackageUpdatesWithSkip, checkForPackageUpdates } = require('./features/packageUpdateChecker');
-const { getMode, runtimeModuleRequired, getBuildConversionConfig } = require('./utils/workspaceUtils');
+const {
+    getMode,
+    runtimeModuleRequired,
+    getBuildConversionConfig,
+    getSettings,
+    getSettingsFindings,
+    settingsHaveErrors,
+    invalidateSettings
+} = require('./utils/workspaceUtils');
+const settings = require('./core/settings');
 const pathResolver = require('./features/pathResolver');
 const explicitMode = require('./features/explicitMode');
 
@@ -80,6 +89,26 @@ function enableWatchers() {
         print('settings.jsonc changed, regenerating aliases...');
         debouncedGenerateFileAliases();
     });
+    // The Project settings file outranks .vscode/settings.json, and VS Code's configuration
+    // events never fire for it — it is an ordinary file as far as the editor is concerned.
+    createWatcher(`**/${settings.PROJECT_SETTINGS_FILE}`, true, () => {
+        print(`${settings.PROJECT_SETTINGS_FILE} changed, reloading settings...`);
+        // A mode/style/build-conversion change here has to rewire, exactly as the same change
+        // in VS Code settings does — but no configuration event fires for this file, so the
+        // rewire keys are compared by value instead.
+        const before = rewireSignature();
+        invalidateSettings();
+        if (rewireSignature() !== before) {
+            pathResolver.invalidateContext();
+            if (isActive) {
+                debug(`${settings.PROJECT_SETTINGS_FILE} changed a rewire setting; rewiring extension features.`);
+                disableExtensionFeatures();
+                enableExtensionFeatures();
+            }
+            return;
+        }
+        debouncedGenerateFileAliases();
+    });
 
     // Explicit mode reads .luaurc (user-maintained) and the Rojo project instead of writing
     // them, so edits to either must refresh the resolver context. NOT watched in dynamic
@@ -89,15 +118,15 @@ function enableWatchers() {
             print('.luaurc changed, refreshing module index...');
             debouncedGenerateFileAliases();
         });
-        const config = vscode.workspace.getConfiguration('require-on-rails');
+        const settingsNow = getSettings();
         if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
             const folder = vscode.workspace.workspaceFolders[0];
             // Both are watched: the sourcemap is the preferred source, the project file the
             // fallback, and either can appear or change at any time. Rojo rewriting the
             // sourcemap on every save is absorbed by the existing debounce.
             for (const [label, relativePath] of [
-                ['Rojo project', config.get('rojoProjectPath', 'default.project.json')],
-                ['Rojo sourcemap', config.get('sourcemapPath', 'sourcemap.json')]
+                ['Rojo project', settingsNow['rojoProjectPath']],
+                ['Rojo sourcemap', settingsNow['sourcemapPath']]
             ]) {
                 createWatcher(new vscode.RelativePattern(folder, relativePath), true, () => {
                     print(`${label} changed, refreshing module index...`);
@@ -280,11 +309,72 @@ const ALIAS_CONFIG_KEYS = ['directoriesToScan', 'ignoreDirectories', 'pathPriori
 // runtimeModuleRequired(), which gates the import-block UI.
 const REWIRE_CONFIG_KEYS = ['mode', 'explicitPathStyle', 'buildConversion.enabled'];
 
+// The resolved values of the rewire keys, for change detection where no configuration event
+// exists (the Project settings file is an ordinary file to VS Code).
+function rewireSignature() {
+    const s = getSettings();
+    return REWIRE_CONFIG_KEYS.map(key => String(s[key])).join('|');
+}
+
+// Mode is written to the Project settings file, not workspace settings, so the choice is
+// visible to the CLI and the CI action and can be committed (ADR 0004). Creates the file.
+/**
+ * @param {string} mode
+ * @returns {boolean} False when the write failed (already reported)
+ */
+function writeMode(mode) {
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!workspaceRoot) return false;
+    try {
+        settings.writeProjectSetting(workspaceRoot, 'mode', mode);
+    } catch (e) {
+        error(`Could not write ${settings.PROJECT_SETTINGS_FILE}:`, e);
+        vscode.window.showErrorMessage(
+            `RequireOnRails: could not write ${settings.PROJECT_SETTINGS_FILE}. See the RequireOnRails output for details.`);
+        return false;
+    }
+    invalidateSettings();
+    return true;
+}
+
+// Operations refuse to run on settings that could not be resolved (ADR 0004) — a build or an
+// alias write against fallback values the user did not choose is worse than not running.
+// Returns true when the caller must bail; the findings are already squiggled on the file by
+// refreshAliasDiagnostics, so this only needs to say which operation stopped and why.
+/** @param {string} operation */
+function reportSettingsErrors(operation) {
+    if (!settingsHaveErrors()) return false;
+    const first = getSettingsFindings().find(f => f.severity === 'error');
+    const openFile = 'Open File';
+    vscode.window.showErrorMessage(
+        `RequireOnRails: ${operation} stopped — ${first ? first.message : `${settings.PROJECT_SETTINGS_FILE} could not be read`}`,
+        openFile
+    ).then(choice => {
+        if (choice !== openFile) return;
+        const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        if (!root) return;
+        vscode.window.showTextDocument(vscode.Uri.file(path.join(root, first ? first.file : settings.PROJECT_SETTINGS_FILE)));
+    });
+    return true;
+}
+
 // Every regeneration path goes through here, so alias diagnostics can never drift out of sync
 // with what was just computed. Dynamic mode writes .luaurc; explicit mode NEVER touches it and
 // rebuilds the in-memory module index instead. generateFileAliases returns undefined when it
 // bails early (no workspace folder, unparseable .luaurc).
 function regenerateAliasesAndDiagnostics() {
+    // Settings feed every path below, so re-resolve the chain (project file included) before
+    // anything reads them.
+    invalidateSettings();
+
+    // Unusable settings still refresh diagnostics — that is what puts the squiggle on
+    // requireonrails.json — but nothing is generated or written from values the user did not
+    // choose.
+    if (settingsHaveErrors()) {
+        refreshAliasDiagnostics();
+        return;
+    }
+
     // Every regeneration means the resolution context changed (alias set, module index, or
     // Rojo mapping) — which can change the rendered form of requires in files that were not
     // edited. That is exactly the watch pipeline's full-rebuild boundary.
@@ -353,7 +443,9 @@ function activate(context) {
     disableEventListeners();
 
     const config = vscode.workspace.getConfiguration('require-on-rails');
-    const contextualImportTemplate = config.get('contextualImportTemplate', '');
+    // Settings may have been resolved during a previous activation in this host.
+    invalidateSettings();
+    const contextualImportTemplate = getSettings()['contextualImportTemplate'];
 
     // Create output channel for logging. `{ log: true }` makes this a LogOutputChannel, so
     // verbosity is controlled by the user via the Output panel's gear icon (or the
@@ -370,19 +462,22 @@ function activate(context) {
     validateContextualImportTemplate(contextualImportTemplate, true);
 
     const configChangeListener = vscode.workspace.onDidChangeConfiguration((event) => {
-        if (event.affectsConfiguration('require-on-rails.contextualImportTemplate')) {
-            const updatedTemplate = vscode.workspace
-                .getConfiguration('require-on-rails')
-                .get('contextualImportTemplate', '');
+        if (!event.affectsConfiguration('require-on-rails')) return;
+        // The editor configuration is one source of the resolved chain, so any change to it
+        // invalidates the snapshot — even when the Project settings file ends up winning.
+        const beforeRewire = rewireSignature();
+        invalidateSettings();
 
-            validateContextualImportTemplate(updatedTemplate, true);
+        if (event.affectsConfiguration('require-on-rails.contextualImportTemplate')) {
+            validateContextualImportTemplate(getSettings()['contextualImportTemplate'], true);
         }
 
-        // Mode/style changes swap which watchers, listeners, and providers should exist,
-        // so tear everything down and bring it back up under the new configuration.
-        const changedRewireSetting = REWIRE_CONFIG_KEYS.find(key =>
-            event.affectsConfiguration(`require-on-rails.${key}`)
-        );
+        // Mode/style changes swap which watchers, listeners, and providers should exist, so
+        // tear everything down and bring it back up under the new configuration. Compared by
+        // resolved value: a setting the Project settings file overrides has not changed.
+        const changedRewireSetting = rewireSignature() !== beforeRewire
+            ? REWIRE_CONFIG_KEYS.find(key => event.affectsConfiguration(`require-on-rails.${key}`)) || 'mode'
+            : undefined;
         if (changedRewireSetting) {
             pathResolver.invalidateContext();
             if (isActive) {
@@ -490,10 +585,9 @@ function activate(context) {
             }
         ], { placeHolder: `How should requires be resolved? (current: ${current})` });
         if (!pick || pick.label === current) return;
-        await vscode.workspace.getConfiguration('require-on-rails')
-            .update('mode', pick.label, vscode.ConfigurationTarget.Workspace);
-        // The configuration listener performs the rewire; just confirm.
-        vscode.window.showInformationMessage(`RequireOnRails: switched to ${pick.label} mode for this workspace.`);
+        if (!writeMode(pick.label)) return;
+        // The project-file watcher performs the rewire; just confirm.
+        vscode.window.showInformationMessage(`RequireOnRails: switched to ${pick.label} mode in ${settings.PROJECT_SETTINGS_FILE}.`);
     });
 
     registerCommand(context, 'require-on-rails.rewriteAllRequires', () => {
@@ -501,6 +595,7 @@ function activate(context) {
             vscode.window.showInformationMessage('RequireOnRails: "Rewrite All Requires" is an explicit-mode action. Switch mode first (RequireOnRails: Select Mode).');
             return;
         }
+        if (reportSettingsErrors('rewrite')) return;
         explicitMode.rewriteAllRequires();
     });
 
@@ -514,22 +609,13 @@ function activate(context) {
             vscode.window.showInformationMessage('RequireOnRails: enable require-on-rails.buildConversion.enabled to use Build conversion.');
             return;
         }
+        if (reportSettingsErrors('build')) return;
         const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
-        const config = vscode.workspace.getConfiguration('require-on-rails');
 
         /** @type {ReturnType<typeof runBuild>} */
         let result;
         try {
-            result = runBuild(workspaceRoot, {
-                directoriesToScan: config.get('directoriesToScan') || [],
-                ignoreDirectories: config.get('ignoreDirectories') || [],
-                pathPriority: config.get('pathPriority', []),
-                rojoProjectPath: config.get('rojoProjectPath', 'default.project.json'),
-                sourcemapPath: config.get('sourcemapPath', 'sourcemap.json'),
-                importModulePaths: config.get('importModulePaths') || [],
-                outputDirectory: build.outputDirectory,
-                outputRequireStyle: build.outputRequireStyle
-            });
+            result = runBuild(workspaceRoot, settings.buildOptions(getSettings()));
         } catch (e) {
             error('Build failed unexpectedly:', e);
             vscode.window.showErrorMessage('RequireOnRails: build failed unexpectedly. See the RequireOnRails output for details.');
@@ -683,9 +769,14 @@ function activate(context) {
     // workspace settings. Dismissal writes nothing — behavior stays dynamic (the setting's
     // default) and the choice is re-offered next activation and via the menu.
     const modeInspection = config.inspect('mode');
+    const workspaceRootForPrompt = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     const hasModeChoice = modeInspection?.workspaceValue !== undefined
         || modeInspection?.workspaceFolderValue !== undefined
-        || modeInspection?.globalValue !== undefined;
+        || modeInspection?.globalValue !== undefined
+        // A project file that already answers the question, from a previous session or a
+        // teammate's commit.
+        || (workspaceRootForPrompt !== undefined
+            && settings.resolveSettings(workspaceRootForPrompt).projectValues['mode'] !== undefined);
     if (!hasModeChoice && vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
         const dynamicChoice = 'Dynamic (aliases + runtime module)';
         const explicitChoice = 'Explicit (full paths)';
@@ -695,13 +786,11 @@ function activate(context) {
             explicitChoice
         ).then(choice => {
             if (!choice) return;
-            const mode = choice === explicitChoice ? 'explicit' : 'dynamic';
-            return vscode.workspace.getConfiguration('require-on-rails')
-                .update('mode', mode, vscode.ConfigurationTarget.Workspace);
+            writeMode(choice === explicitChoice ? 'explicit' : 'dynamic');
         });
     }
 
-    if (config.get("startsImmediately") && vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
+    if (getSettings()['startsImmediately'] && vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
         print('RequireOnRails is starting immediately as per configuration.');
         toggleExtension();
     }

@@ -51,23 +51,32 @@ suite('CLI: JSONC parsing', () => {
 });
 
 suite('CLI: configuration loading', () => {
-    test('Reads the fixture settings, overriding manifest defaults', () => {
-        const config = loadConfig(path.join(REPO_ROOT, FIXTURE));
+    test('Reads the fixture settings, overriding the shipped defaults', () => {
+        const { config } = loadConfig(path.join(REPO_ROOT, FIXTURE));
         assert.deepStrictEqual(config.directoriesToScan, ['src']);
-        // The manifest default is {Server, Client, Shared}; the fixture clears it.
+        // The shipped default is {Server, Client, Shared}; the fixture clears it.
         assert.deepStrictEqual(config.manualAliases, {});
     });
 
-    test('Falls back to manifest defaults for unset keys', () => {
-        const config = loadConfig(path.join(REPO_ROOT, FIXTURE));
+    test('Falls back to the shipped defaults for unset keys', () => {
+        const { config } = loadConfig(path.join(REPO_ROOT, FIXTURE));
         assert.strictEqual(config.mode, 'dynamic');
         assert.deepStrictEqual(config.ignoreDirectories, ['^_.*']);
     });
 
     test('Uses defaults entirely when there is no settings file', () => {
-        const config = loadConfig(path.join(REPO_ROOT, 'images'));
+        const { config, findings } = loadConfig(path.join(REPO_ROOT, 'images'));
         assert.strictEqual(config.mode, 'dynamic');
         assert.deepStrictEqual(config.directoriesToScan, ['src/Server', 'src/Client', 'src/Shared']);
+        assert.deepStrictEqual(findings, [], 'an absent settings file is not a problem to report');
+    });
+
+    test('The Project settings file wins over .vscode/settings.json', () => {
+        // ProjectTemplate ships both: editor preferences in .vscode, project settings here.
+        const { config, findings } = loadConfig(path.join(REPO_ROOT, 'ProjectTemplate'));
+        assert.deepStrictEqual(findings, [], `template settings should be clean:\n${JSON.stringify(findings, null, 2)}`);
+        assert.deepStrictEqual(config.manualAliases,
+            { Server: 'src/Server', Client: 'src/Client', Shared: 'src/Shared' });
     });
 });
 
