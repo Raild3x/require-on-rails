@@ -354,7 +354,24 @@ function registerBuildWatch() {
     ];
 }
 
+// Test seam: the watch's decision logic lives in module state driven by editor events, so
+// tests drive attemptWrite directly and reset the state between cases.
+function _resetForTests() {
+    for (const rel of [..._held.keys()]) clearHold(rel);
+    if (_hookTimer) { clearTimeout(_hookTimer); _hookTimer = null; }
+    if (_rebuildTimer) { clearTimeout(_rebuildTimer); _rebuildTimer = null; }
+    _hookChanged = [];
+    _deleted.clear();
+    _fullRebuildPending = false;
+}
+
 module.exports = {
     registerBuildWatch,
-    scheduleFullRebuild
+    scheduleFullRebuild,
+    // Exported for tests
+    attemptWrite,
+    hasLuauErrors,
+    _resetForTests,
+    _isHeld: (/** @type {string} */ rel) => _held.has(rel),
+    HOLD_GRACE_MS
 };
