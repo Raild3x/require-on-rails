@@ -4,9 +4,7 @@ test/**
 .gitignore
 .yarnrc
 vsc-extension-quickstart.md
-**/jsconfig.json
-**/*.map
-**/eslint.config.mjs
+tsconfig.json
 **/.vscode-test.*
 **/images/IconRefs/**
 roblox.yml

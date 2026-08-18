@@ -1,6 +1,9 @@
 node_modules
 .vscode-test/
+test-playground/
 *.vsix
 .env
 roblox.yml
 package-lock.json
+**/adr/**
+CONTEXT.md

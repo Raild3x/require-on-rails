@@ -3,7 +3,7 @@
   "displayName": "RequireOnRails",
   "description": "An opinionated Roblox Luau utility extension to simplify working with complex codebase hierarchies",
   "version": "2.2.0",
-  "publisher": "Raild3x",
+  "publisher": "raildex",
   "icon": "images/icon_v2.png",
   "repository": {
     "type": "git",
@@ -19,34 +19,118 @@
   "contributes": {
     "commands": [
       {
+        "command": "require-on-rails.openMenu",
+        "title": "Open Menu",
+        "category": "RequireOnRails"
+      },
+      {
         "command": "require-on-rails.toggleActive",
-        "title": "Toggle RoR Active"
+        "title": "Toggle Active",
+        "category": "RequireOnRails"
       },
       {
         "command": "require-on-rails.setupDefaultProject",
-        "title": "Setup Default Project Structure"
+        "title": "Setup Default Project Structure",
+        "category": "RequireOnRails"
       },
       {
         "command": "require-on-rails.downloadLuauModule",
-        "title": "Download Luau Module"
+        "title": "Download Luau Module",
+        "category": "RequireOnRails"
       },
       {
         "command": "require-on-rails.addImportToAllFiles",
-        "title": "Add Import require def to all Luau files."
+        "title": "Add Import Definition to All Files",
+        "category": "RequireOnRails"
       },
       {
         "command": "require-on-rails.regenerateAliases",
-        "title": "Regenerate Aliases (Debug)"
+        "title": "Regenerate Aliases",
+        "category": "RequireOnRails"
+      },
+      {
+        "command": "require-on-rails.manageAliasCommands",
+        "title": "Manage Alias Regeneration Commands",
+        "category": "RequireOnRails"
       },
       {
         "command": "require-on-rails.checkForUpdates",
-        "title": "Check for RequireOnRails Package Updates"
+        "title": "Check for Updates",
+        "category": "RequireOnRails"
+      },
+      {
+        "command": "require-on-rails.selectMode",
+        "title": "Select Mode",
+        "category": "RequireOnRails"
+      },
+      {
+        "command": "require-on-rails.rewriteAllRequires",
+        "title": "Rewrite All Requires to Current Style",
+        "category": "RequireOnRails"
+      },
+      {
+        "command": "require-on-rails.buildProject",
+        "title": "Build Project",
+        "category": "RequireOnRails"
+      },
+      {
+        "command": "require-on-rails.generateBuildProject",
+        "title": "Generate Build Project File",
+        "category": "RequireOnRails"
+      },
+      {
+        "command": "require-on-rails.removeImportFromAllFiles",
+        "title": "Remove Import Boilerplate From All Files",
+        "category": "RequireOnRails"
       }
     ],
     "configuration": {
       "type": "object",
       "title": "RequireOnRails Configuration",
       "properties": {
+        "require-on-rails.mode": {
+          "type": "string",
+          "default": "dynamic",
+          "enum": [
+            "dynamic",
+            "explicit"
+          ],
+          "enumDescriptions": [
+            "Generate basename aliases into .luaurc and resolve them at runtime with the RequireOnRails Luau module.",
+            "Write full require paths into source at edit time. No aliases are generated and .luaurc is never written by the extension."
+          ],
+          "description": "How requires are resolved. 'dynamic' generates basename aliases resolved at runtime; 'explicit' writes full, statically-resolvable paths into your source at edit time."
+        },
+        "require-on-rails.explicitPathStyle": {
+          "type": "string",
+          "default": "alias",
+          "enum": [
+            "alias",
+            "relative",
+            "game"
+          ],
+          "enumDescriptions": [
+            "Alias-rooted paths like @Shared/Stuff/myModule, using the longest matching alias from .luaurc. Still requires the RequireOnRails Luau module at runtime (Roblox does not support .luaurc aliases natively).",
+            "Relative paths like ./Stuff/myModule, supported natively by Roblox string requires.",
+            "DataModel-absolute paths like @game/ReplicatedStorage/..., supported natively by Roblox. Requires a Rojo project file to map the filesystem to the DataModel."
+          ],
+          "description": "Explicit mode only: the form written when RequireOnRails completes or rewrites a require path."
+        },
+        "require-on-rails.preferRelativePaths": {
+          "type": "boolean",
+          "default": false,
+          "description": "Explicit mode only: when the relative form of a path has strictly fewer segments than the configured explicitPathStyle form, write the relative form instead."
+        },
+        "require-on-rails.rojoProjectPath": {
+          "type": "string",
+          "default": "default.project.json",
+          "description": "Explicit mode only: workspace-relative path of the Rojo project file used to map files to DataModel paths for the 'game' path style. Only used when no sourcemap is found at sourcemapPath. Glob $path values and globIgnorePaths are not supported."
+        },
+        "require-on-rails.sourcemapPath": {
+          "type": "string",
+          "default": "sourcemap.json",
+          "description": "Explicit mode only: workspace-relative path of a Rojo-generated sourcemap, the preferred source for mapping files to DataModel paths for the 'game' path style. Falls back to rojoProjectPath when the file is missing. Keep 'rojo sourcemap --watch' running so newly created files stay resolvable."
+        },
         "require-on-rails.startsImmediately": {
           "type": "boolean",
           "default": false,
@@ -165,16 +249,67 @@
           "items": {
             "type": "string"
           }
+        },
+        "require-on-rails.buildConversion.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable Build conversion: produce a runtime-module-free copy of the project by rewriting alias requires to natively-resolvable forms at build time. Enables the build commands and stops Import boilerplate insertion — the RequireOnRails Luau module is no longer needed."
+        },
+        "require-on-rails.buildConversion.outputDirectory": {
+          "type": "string",
+          "default": "dist",
+          "description": "Workspace-relative directory the Build Project command writes the converted copy of the scanned directories into. Consumed by rojo via the generated build project file. Recommended for .gitignore."
+        },
+        "require-on-rails.buildConversion.outputRequireStyle": {
+          "type": "string",
+          "default": "string",
+          "enum": [
+            "string",
+            "find_first_child",
+            "wait_for_child",
+            "property"
+          ],
+          "enumDescriptions": [
+            "Native string requires: relative within the file's area, @game-rooted where a path crosses out of a cloned container. Note string requires do not wait for replication (use game.Loaded:Wait() or pick wait_for_child).",
+            "Instance expressions using :FindFirstChild(), e.g. require(game:GetService(\"ReplicatedStorage\"):FindFirstChild(\"Shared\")). Requires a Rojo sourcemap or project file.",
+            "Instance expressions using :WaitForChild(), robust against replication timing for client code. Requires a Rojo sourcemap or project file.",
+            "Instance expressions using property indexing, e.g. require(game:GetService(\"ReplicatedStorage\").Shared). Requires a Rojo sourcemap or project file."
+          ],
+          "description": "The require form Build conversion writes into the converted output."
+        },
+        "require-on-rails.buildConversion.buildProjectFile": {
+          "type": "string",
+          "default": "build.project.json",
+          "description": "Workspace-relative path the Generate Build Project File command writes the build Rojo project to (the user's project file with $path entries redirected into the output directory)."
+        },
+        "require-on-rails.buildConversion.hooks.onBuildCompleted": {
+          "type": "array",
+          "default": [],
+          "description": "Shell commands to run after a successful Build Project run, e.g. a darklua or stylua pass over the output directory. Executed from the workspace root with ROR_EVENT, ROR_OUTPUT_DIR and ROR_BUILD_PROJECT environment variables. Workspace-supplied commands need one-time approval, same as onAliasesRegenerated.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "require-on-rails.buildConversion.hooks.onWatchConverted": {
+          "type": "array",
+          "default": [],
+          "description": "Shell commands to run after each watch conversion batch, with ROR_EVENT, ROR_OUTPUT_DIR and ROR_CHANGED_FILES (newline-separated) environment variables. Empty by default so nothing external runs in the watch hot path. Workspace-supplied commands need one-time approval, same as onAliasesRegenerated.",
+          "items": {
+            "type": "string"
+          }
         }
       }
     }
   },
   "scripts": {
     "test": "node ./test/vs-code-extension/runners/runTest.js",
+    "playground:reset": "node scripts/reset-playground.js",
     "test:fast": "node ./test/vs-code-extension/runners/runFastTest.js",
-    "pretest": "npm run compile",
-    "compile": "echo TS conversion disabled",
-    "vscode:prepublish": "npm run compile",
+    "test:cli": "mocha --ui tdd \"test/cli/**/*.test.js\"",
+    "perf": "node test/perf/bench.js",
+    "pretest": "npm run typecheck",
+    "typecheck": "tsc --noEmit",
+    "vscode:prepublish": "npm run typecheck",
     "package": "node scripts/build.js",
     "build": "node scripts/build.js",
     "build:quick": "npx vsce package",
@@ -183,12 +318,13 @@
   "devDependencies": {
     "@types/mocha": "^10.0.6",
     "@types/node": "^18.x",
-    "@types/vscode": "^1.73.0",
+    "@types/vscode": "^1.101.0",
     "@vscode/test-cli": "^0.0.11",
     "@vscode/test-electron": "^2.3.8",
     "@vscode/vsce": "^3.6.0",
     "glob": "^11.0.3",
-    "mocha": "^10.2.0"
+    "mocha": "^10.2.0",
+    "typescript": "^5.5.0"
   },
   "galleryBanner": {
     "color": "#1e1e1e",

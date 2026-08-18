@@ -5,7 +5,12 @@ const fs = require('fs');
 const os = require('os');
 
 // Import extension modules for testing
-const { generateFileAliases, setExtensionContext } = require('../../../src/features/updateLuaFileAliases');
+const {
+    generateFileAliases,
+    setExtensionContext,
+    getAliasCommandApprovalState,
+    setApprovedCommands
+} = require('../../../src/features/updateLuaFileAliases');
 const { hideLines } = require('../../../src/features/hideLines');
 
 // Import shared test utilities
@@ -310,6 +315,65 @@ suite('Configuration Tests', () => {
                 'Approval should be recorded in the approving workspace\'s own state');
             assert.strictEqual(otherState.get('approvedAliasCommands'), undefined,
                 'Approving here must not approve anything for any other workspace');
+        } finally {
+            messages.restore();
+            restore();
+            setExtensionContext(null);
+        }
+    });
+
+    // The palette command ("Manage Alias Regeneration Commands") exists so approval does not
+    // depend on catching the notification. These cover the two exports it is built on.
+
+    test('Approval state should report what the workspace asks for and what is already approved', () => {
+        setExtensionContext({ workspaceState: fakeWorkspaceState({ approvedAliasCommands: ['echo one'] }) });
+        const restore = mockScopedAliasCommands({ globalValue: undefined, workspaceValue: ['echo one', 'echo two'] });
+
+        try {
+            const state = getAliasCommandApprovalState();
+
+            assert.deepStrictEqual(state.workspaceCommands, ['echo one', 'echo two'],
+                'Should list every command the workspace requests, so the picker can show all of them');
+            assert.deepStrictEqual(state.approved, ['echo one'],
+                'Should report the existing approvals, so the picker can pre-check them');
+            assert.strictEqual(state.canApprove, true, 'Workspace state is available, so approving is possible');
+        } finally {
+            restore();
+            setExtensionContext(null);
+        }
+    });
+
+    test('Setting approved commands should replace the set and re-arm the notification', async () => {
+        // Deliberately no user-scoped commands and nothing left approved, so this test never
+        // actually spawns a shell in the shared workspace.
+        const state = fakeWorkspaceState({ approvedAliasCommands: ['echo one'] });
+        setExtensionContext({ workspaceState: state });
+        const restore = mockScopedAliasCommands({ globalValue: undefined, workspaceValue: ['echo one', 'echo two'] });
+        const messages = mockVSCodeMessages();
+
+        try {
+            // Replaces rather than merges: unchecking in the picker is how an approval is revoked.
+            await setApprovedCommands(['echo two']);
+            assert.deepStrictEqual(state.get('approvedAliasCommands'), ['echo two'],
+                'Deselecting "echo one" should revoke it, not leave it merged in');
+
+            await setApprovedCommands([]);
+            assert.deepStrictEqual(state.get('approvedAliasCommands'), [],
+                'Approving nothing is a real answer and should clear the set');
+
+            generateFileAliases();
+            assert.strictEqual(messages.captured.warning.length, 1, 'Unapproved commands should warn');
+
+            generateFileAliases();
+            assert.strictEqual(messages.captured.warning.length, 1,
+                'The same unapproved set should stay quiet, since regeneration runs on every file change');
+
+            // Revoking has to make the command noisy again, otherwise it goes back to being
+            // silently ignored with no way to tell.
+            await setApprovedCommands([]);
+            generateFileAliases();
+            assert.strictEqual(messages.captured.warning.length, 2,
+                'Changing approvals should let the withheld commands warn again');
         } finally {
             messages.restore();
             restore();

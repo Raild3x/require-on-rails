@@ -1,5 +1,10 @@
 {
     "aliases": {
+        "Server": "src/Server",
+        "Client": "src/Client",
+        "Shared": "src/Shared",
+        "ServerAssets": "src/Server/ServerAssets.luau",
+        "SharedAssets": "src/Shared/SharedAssets.luau"
     },
     "languageMode": "strict",
     "lint": {

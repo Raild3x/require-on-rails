@@ -69,6 +69,33 @@ function getPackageVersion() {
 }
 
 /**
+ * Tags the released commit so the GitHub Action can be referenced.
+ *
+ * `uses: Raild3x/require-on-rails@<ref>` resolves against this repository's git refs — pushing
+ * these tags IS how the action is published, there is no separate registry. Two tags per
+ * release: the exact version for anyone pinning, and a floating major that is moved forward
+ * each time so `@v2` users pick up fixes.
+ *
+ * Wally module releases are bookmarked as `wally-vX.Y.Z` instead, so that the bare `vX.Y.Z`
+ * namespace belongs to the extension alone (the two products version independently).
+ *
+ * @param {string} version - The version just published, e.g. "2.3.0"
+ */
+function tagRelease(version) {
+    const major = `v${version.split('.')[0]}`;
+    const options = { stdio: 'inherit', cwd: path.join(__dirname, '..') };
+
+    console.log(`\nTagging v${version} and moving ${major}...`);
+    execSync(`git tag v${version}`, options);
+    execSync(`git tag -f ${major}`, options);
+    execSync(`git push origin v${version}`, options);
+    execSync(`git push -f origin ${major}`, options);
+
+    console.log(`✓ Tagged v${version} and moved ${major}. The action is now available at ` +
+        `Raild3x/require-on-rails@${major}`);
+}
+
+/**
  * Publishes the package to the chosen platform
  * @returns {Promise<void>}
  */
@@ -97,7 +124,20 @@ async function publish() {
         execSync(`npx vsce publish`, { stdio: 'inherit', cwd: path.join(__dirname, '..') });
         
         console.log(`\n✓ Successfully published version ${version} to VS Code Marketplace!`);
-        
+
+        // The marketplace publish above is already irreversible, so a tagging failure must not
+        // be reported as a failed publish — that invites a re-publish of a version that is
+        // already live. Tagging is safe to retry by hand.
+        try {
+            tagRelease(version);
+        } catch (error) {
+            console.error(`\n✗ Published ${version}, but tagging failed: ${error.message}`);
+            console.error('  The extension IS published. Do not re-run publish; just tag by hand:');
+            console.error(`    git tag v${version} && git tag -f v${version.split('.')[0]}`);
+            console.error(`    git push origin v${version} && git push -f origin v${version.split('.')[0]}`);
+            process.exit(1);
+        }
+
     } catch (error) {
         console.error('\n✗ Publish failed:', error.message);
         process.exit(1);

@@ -1,7 +1,11 @@
 const fs = require('fs');
 const path = require('path');
-const vscode = require('vscode');
-const { print, warn } = require('../core/logger');
+// Optional — see updateLuaFileAliases.js. The template-matching helpers are pure and shared
+// with the headless build; only the command entry points below touch the editor.
+/** @type {typeof import('vscode') | null} */
+let vscode = null;
+try { vscode = require('vscode'); } catch (e) { /* running outside VS Code */ }
+const { print, warn, errMsg } = require('../core/logger');
 const {
     DEFAULT_CONTEXTUAL_IMPORT_TEMPLATE,
     getCommonConfig,
@@ -13,6 +17,7 @@ const {
  * Main function to add import require definitions to files using custom aliases
  */
 function addImportToAllFiles() {
+    if (!vscode) return;
     const workspaceRoot = requireWorkspaceRoot('import management');
     if (!workspaceRoot) return;
 
@@ -26,13 +31,14 @@ function addImportToAllFiles() {
         return;
     }
 
+    /** @type {string[]} */
     const filesToProcess = [];
-    
+
     // Scan all directories for files that need the import
     directoriesToScan.forEach(dir => {
         const dirPath = path.join(workspaceRoot, dir);
         if (fs.existsSync(dirPath) && fs.statSync(dirPath).isDirectory()) {
-            scanDirectory(dirPath, config.supportedExtensions, ignoreDirectories, (filePath) => {
+            scanDirectory(dirPath, config.supportedExtensions, ignoreDirectories, (/** @type {string} */ filePath) => {
                 if (fileNeedsImport(filePath, importModulePaths)) {
                     filesToProcess.push(filePath);
                 }
@@ -60,10 +66,15 @@ function addImportToAllFiles() {
 
 /**
  * Recursively scans directories for files that use custom aliases but lack import definition
+ * @param {string} dir - Directory to scan
+ * @param {string|string[]} importModulePaths - Configured import module path(s)
+ * @param {string[]} ignoreDirectories - Directory name patterns to skip
+ * @param {string[]} filesToProcess - Accumulator that receives matching file paths
+ * @returns {void}
  */
 function scanForFilesNeedingImport(dir, importModulePaths, ignoreDirectories, filesToProcess) {
     const config = getCommonConfig();
-    scanDirectory(dir, config.supportedExtensions, ignoreDirectories, (filePath) => {
+    scanDirectory(dir, config.supportedExtensions, ignoreDirectories, (/** @type {string} */ filePath) => {
         if (fileNeedsImport(filePath, importModulePaths)) {
             filesToProcess.push(filePath);
         }
@@ -72,6 +83,8 @@ function scanForFilesNeedingImport(dir, importModulePaths, ignoreDirectories, fi
 
 /**
  * Escapes regex metacharacters so configured import paths can be safely matched.
+ * @param {string} text
+ * @returns {string}
  */
 function escapeRegExp(text) {
     return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -79,6 +92,8 @@ function escapeRegExp(text) {
 
 /**
  * Normalizes configured import paths into a clean string array.
+ * @param {string|string[]} importModulePaths
+ * @returns {string[]}
  */
 function getImportPathsArray(importModulePaths) {
     const pathsArray = Array.isArray(importModulePaths) ? importModulePaths : [importModulePaths];
@@ -90,6 +105,8 @@ function getImportPathsArray(importModulePaths) {
 
 /**
  * Matches the legacy single-line override form: require = require(path)(script).
+ * @param {string} importPath
+ * @returns {RegExp}
  */
 function createSingleLineImportRegex(importPath) {
     const escapedPath = escapeRegExp(importPath);
@@ -100,6 +117,8 @@ function createSingleLineImportRegex(importPath) {
 
 /**
  * Matches the first line of split imports, capturing the assigned local variable name.
+ * @param {string} importPath
+ * @returns {RegExp}
  */
 function createImportAssignmentRegex(importPath) {
     const escapedPath = escapeRegExp(importPath);
@@ -110,6 +129,8 @@ function createImportAssignmentRegex(importPath) {
 
 /**
  * Matches the second line of split imports: require = <capturedVar>(script).
+ * @param {string} varName
+ * @returns {RegExp}
  */
 function createRequireOverwriteRegex(varName) {
     const escapedVarName = escapeRegExp(varName);
@@ -134,10 +155,15 @@ function createGenericImportAssignmentRegex() {
 
 /**
  * Returns line indexes for valid import override definitions in single-line or split form.
+ * @param {string} content - Full file text
+ * @param {string|string[]} importModulePaths - Configured import module path(s)
+ * @returns {number[]} - Matching line indexes, ascending
  */
 function getImportRequireLineIndexes(content, importModulePaths) {
     const lines = content.split('\n');
+    /** @type {Set<number>} */
     const matchedLineIndexes = new Set();
+    /** @type {{ lineIndex: number, variableName: string }[]} */
     const assignmentCandidates = [];
     const importPaths = getImportPathsArray(importModulePaths);
 
@@ -195,6 +221,8 @@ function getImportRequireLineIndexes(content, importModulePaths) {
 
 /**
  * Builds the contextual import snippet from a template for easier customization.
+ * @param {string} importModulePath
+ * @returns {string}
  */
 function createContextualImportSnippet(importModulePath) {
     const { contextualImportTemplate } = getCommonConfig();
@@ -203,6 +231,9 @@ function createContextualImportSnippet(importModulePath) {
 
 /**
  * Builds the contextual import snippet from a template, falling back when invalid.
+ * @param {string} importModulePath
+ * @param {string|undefined} template - Template containing `{IMPORT_MODULE_PATH}`; falls back to the default when absent or malformed
+ * @returns {string}
  */
 function createContextualImportSnippetFromTemplate(importModulePath, template) {
     const templateToUse =
@@ -215,6 +246,9 @@ function createContextualImportSnippetFromTemplate(importModulePath, template) {
 
 /**
  * Checks if a file has a valid import require definition
+ * @param {string} content - Full file text
+ * @param {string|string[]} importModulePaths - Configured import module path(s)
+ * @returns {boolean}
  */
 function hasValidImportRequire(content, importModulePaths) {
     return getImportRequireLineIndexes(content, importModulePaths).length > 0;
@@ -222,6 +256,9 @@ function hasValidImportRequire(content, importModulePaths) {
 
 /**
  * Checks if a file uses custom aliases but lacks the import require definition
+ * @param {string} filePath
+ * @param {string|string[]} importModulePaths - Configured import module path(s)
+ * @returns {boolean}
  */
 function fileNeedsImport(filePath, importModulePaths) {
     try {
@@ -238,13 +275,16 @@ function fileNeedsImport(filePath, importModulePaths) {
         // Use the centralized function to check for valid import require definitions
         return !hasValidImportRequire(content, importModulePaths);
     } catch (error) {
-        warn(`Error reading file ${filePath}:`, error.message);
+        warn(`Error reading file ${filePath}:`, errMsg(error));
         return false;
     }
 }
 
 /**
  * Helper function to check if directory should be ignored
+ * @param {string} dirName
+ * @param {string[]} ignorePatterns
+ * @returns {boolean}
  */
 function shouldIgnoreDirectory(dirName, ignorePatterns) {
     // This is now handled by workspaceUtils.shouldIgnoreDirectory
@@ -255,9 +295,16 @@ function shouldIgnoreDirectory(dirName, ignorePatterns) {
 
 /**
  * Shows a preview of files that will be modified
+ * @param {string[]} filesToProcess
+ * @param {string} defaultImportModulePath
+ * @param {string|undefined} contextualImportTemplate
+ * @returns {void}
  */
 function showFilesPreview(filesToProcess, defaultImportModulePath, contextualImportTemplate) {
-    const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
+    if (!vscode) return;
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders) return;
+    const workspaceRoot = workspaceFolders[0].uri.fsPath;
     const relativePaths = filesToProcess.map(file => 
         path.relative(workspaceRoot, file).replace(/\\/g, '/')
     );
@@ -277,8 +324,14 @@ function showFilesPreview(filesToProcess, defaultImportModulePath, contextualImp
 
 /**
  * Adds the import require definition to all specified files
+ * @param {string[]} filesToProcess
+ * @param {string} defaultImportModulePath
+ * @param {string} workspaceRoot
+ * @param {string|undefined} contextualImportTemplate
+ * @returns {void}
  */
 function addImportToFiles(filesToProcess, defaultImportModulePath, workspaceRoot, contextualImportTemplate) {
+    if (!vscode) return;
     const config = getCommonConfig();
     const { preferredImportPlacement } = config;
     
@@ -294,7 +347,7 @@ function addImportToFiles(filesToProcess, defaultImportModulePath, workspaceRoot
             }
         } catch (error) {
             errorCount++;
-            warn(`Failed to add import to ${filePath}:`, error.message);
+            warn(`Failed to add import to ${filePath}:`, errMsg(error));
         }
     });
     
@@ -310,6 +363,11 @@ function addImportToFiles(filesToProcess, defaultImportModulePath, workspaceRoot
 
 /**
  * Adds import require definition to a single file
+ * @param {string} filePath
+ * @param {string} defaultImportModulePath
+ * @param {string} preferredImportPlacement - One of `TopOfFile`, `BeforeFirstRequire`, `AfterDefiningRobloxServices`
+ * @param {string|undefined} contextualImportTemplate
+ * @returns {boolean}
  */
 function addImportToSingleFile(filePath, defaultImportModulePath, preferredImportPlacement, contextualImportTemplate) {
     const content = fs.readFileSync(filePath, 'utf8');
@@ -392,11 +450,111 @@ function addImportToSingleFile(filePath, defaultImportModulePath, preferredImpor
     return true;
 }
 
+// The selene suppression that conventionally rides along with the boilerplate (hideLines
+// dims it too); orphaned copies are removed together with the block they annotated.
+const SELENE_ALLOW_RE = /^\s*--\s*selene:\s*allow\(incorrect_standard_library_use\)\s*$/;
+
+/**
+ * Removes the Import boilerplate from one file's text: the matched template lines, any
+ * selene-allow comment directly above a removed line, and one blank line left behind by
+ * each removed block. Pure, shared by the editor command and the headless build.
+ * @param {string} content
+ * @param {string|string[]} importModulePaths
+ * @returns {{text: string, removed: number}}
+ */
+function stripImportLines(content, importModulePaths) {
+    const indexes = getImportRequireLineIndexes(content, importModulePaths);
+    if (indexes.length === 0) return { text: content, removed: 0 };
+
+    const lines = content.split('\n');
+    const toRemove = new Set(indexes);
+    for (const index of indexes) {
+        if (index > 0 && SELENE_ALLOW_RE.test(lines[index - 1])) toRemove.add(index - 1);
+    }
+    // One trailing blank per removed block, so "template + blank + code" collapses cleanly.
+    for (const index of [...toRemove]) {
+        const next = index + 1;
+        if (!toRemove.has(next) && next < lines.length && lines[next].trim() === '') toRemove.add(next);
+    }
+
+    return {
+        text: lines.filter((_, index) => !toRemove.has(index)).join('\n'),
+        removed: indexes.length
+    };
+}
+
+/**
+ * One-time migration for adopting Build conversion: strips the Import boilerplate from every
+ * scanned file, after a confirmation listing how many files are affected.
+ */
+function removeImportFromAllFiles() {
+    if (!vscode) return;
+    const workspaceRoot = requireWorkspaceRoot('boilerplate removal');
+    if (!workspaceRoot) return;
+
+    const config = getCommonConfig();
+    const { directoriesToScan, ignoreDirectories, importModulePaths } = config;
+
+    /** @type {{filePath: string, stripped: {text: string, removed: number}}[]} */
+    const pending = [];
+    directoriesToScan.forEach(dir => {
+        const dirPath = path.join(workspaceRoot, dir);
+        if (!fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) return;
+        scanDirectory(dirPath, config.supportedExtensions, ignoreDirectories, (/** @type {string} */ filePath) => {
+            let content;
+            try {
+                content = fs.readFileSync(filePath, 'utf8');
+            } catch (e) {
+                warn(`Error reading file ${filePath}:`, errMsg(e));
+                return;
+            }
+            const stripped = stripImportLines(content, importModulePaths);
+            if (stripped.removed > 0) pending.push({ filePath, stripped });
+        });
+    });
+
+    if (pending.length === 0) {
+        vscode.window.showInformationMessage('RequireOnRails: no files contain the Import boilerplate.');
+        return;
+    }
+
+    // Modal: this edits many files at once and is not undoable from a notification toast.
+    vscode.window.showInformationMessage(
+        `Remove the Import boilerplate from ${pending.length} file(s)?`,
+        {
+            modal: true,
+            detail: 'With Build conversion enabled the RequireOnRails Luau module is no longer used, ' +
+                'so the "require = Import(script)" lines serve no purpose. This rewrites the files on disk.'
+        },
+        'Remove'
+    ).then(choice => {
+        if (choice !== 'Remove') return;
+        let success = 0;
+        let failed = 0;
+        for (const { filePath, stripped } of pending) {
+            try {
+                fs.writeFileSync(filePath, stripped.text, 'utf8');
+                success++;
+                print(`Removed import boilerplate from: ${path.relative(workspaceRoot, filePath).replace(/\\/g, '/')}`);
+            } catch (e) {
+                failed++;
+                warn(`Failed to strip import from ${filePath}:`, errMsg(e));
+            }
+        }
+        const message = `RequireOnRails: removed the Import boilerplate from ${success} file(s).` +
+            (failed > 0 ? ` ${failed} file(s) failed.` : '');
+        if (failed > 0) vscode?.window.showWarningMessage(message);
+        else vscode?.window.showInformationMessage(message);
+    });
+}
+
 module.exports = {
     addImportToAllFiles,
     addImportToSingleFile,
     hasValidImportRequire,
     getImportRequireLineIndexes,
     createContextualImportSnippet,
-    createContextualImportSnippetFromTemplate
+    createContextualImportSnippetFromTemplate,
+    stripImportLines,
+    removeImportFromAllFiles
 };

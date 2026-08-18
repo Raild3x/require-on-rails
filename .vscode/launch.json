@@ -12,6 +12,17 @@
 			"args": [
 				"--extensionDevelopmentPath=${workspaceFolder}"
 			]
+		},
+		{
+			// Opens the dev host directly on the pre-built playground workspace
+			// (test-playground/) so manual testing needs no folder-picking.
+			"name": "Run Extension (playground)",
+			"type": "extensionHost",
+			"request": "launch",
+			"args": [
+				"${workspaceFolder}/test-playground",
+				"--extensionDevelopmentPath=${workspaceFolder}"
+			]
 		}
 	]
 }

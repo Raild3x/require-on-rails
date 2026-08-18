@@ -1,7 +1,11 @@
-const vscode = require('vscode');
+// Optional — see updateLuaFileAliases.js. Required here only so that aliasDiagnostics, which
+// imports this module at load time, can itself be imported outside VS Code.
+/** @type {typeof import('vscode') | null} */
+let vscode = null;
+try { vscode = require('vscode'); } catch (e) { /* running outside VS Code */ }
 const fs = require('fs');
 const path = require('path');
-const { warn } = require('../core/logger');
+const { warn, errMsg } = require('../core/logger');
 
 const DEFAULT_CONTEXTUAL_IMPORT_TEMPLATE = [
     'local Import = require({IMPORT_MODULE_PATH})',
@@ -13,7 +17,7 @@ const DEFAULT_CONTEXTUAL_IMPORT_TEMPLATE = [
  * @returns {boolean} - True if workspace folders are available
  */
 function hasWorkspaceFolders() {
-    return vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0;
+    return !!(vscode && vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0);
 }
 
 /**
@@ -21,10 +25,7 @@ function hasWorkspaceFolders() {
  * @returns {string|null} - Workspace root path or null if not available
  */
 function getWorkspaceRoot() {
-    if (!hasWorkspaceFolders()) {
-        return null;
-    }
-    return vscode.workspace.workspaceFolders[0].uri.fsPath;
+    return vscode?.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
 }
 
 /**
@@ -34,7 +35,7 @@ function getWorkspaceRoot() {
  */
 function requireWorkspaceRoot(operationName = 'operation') {
     if (!hasWorkspaceFolders()) {
-        vscode.window.showErrorMessage(`RequireOnRails: Please open a workspace folder first to perform ${operationName}.`);
+        vscode?.window.showErrorMessage(`RequireOnRails: Please open a workspace folder first to perform ${operationName}.`);
         return null;
     }
     return getWorkspaceRoot();
@@ -82,25 +83,40 @@ function scanDirectory(dir, supportedExtensions, ignoreDirectories, callback) {
             }
         }
     } catch (error) {
-        warn(`Error scanning directory ${dir}:`, error.message);
+        warn(`Error scanning directory ${dir}:`, errMsg(error));
     }
 }
 
 /**
  * Gets the configuration for the extension
- * @returns {vscode.WorkspaceConfiguration} - Extension configuration
+ * @returns {import('vscode').WorkspaceConfiguration} - Extension configuration
  */
 function getExtensionConfig() {
+    if (!vscode) throw new Error('getExtensionConfig requires VS Code; no settings are available outside the editor.');
     return vscode.workspace.getConfiguration('require-on-rails');
 }
 
 /**
  * Gets common configuration values used across multiple modules
- * @returns {object} - Common configuration object
+ * @returns {{
+ *   directoriesToScan: string[],
+ *   ignoreDirectories: string[],
+ *   supportedExtensions: string[],
+ *   importModulePaths: string[],
+ *   tryToAddImportRequire: boolean,
+ *   preferredImportPlacement: 'TopOfFile'|'BeforeFirstRequire'|'AfterDefiningRobloxServices',
+ *   importOpacity: number,
+ *   contextualImportTemplate: string,
+ *   mode: 'dynamic'|'explicit',
+ *   explicitPathStyle: 'alias'|'relative'|'game',
+ *   preferRelativePaths: boolean,
+ *   rojoProjectPath: string,
+ *   sourcemapPath: string
+ * }} - Common configuration object
  */
 function getCommonConfig() {
     const config = getExtensionConfig();
-    
+
     return {
         directoriesToScan: config.get('directoriesToScan') || [],
         ignoreDirectories: config.get('ignoreDirectories') || [],
@@ -109,8 +125,47 @@ function getCommonConfig() {
         tryToAddImportRequire: config.get('tryToAddImportRequire', true),
         preferredImportPlacement: config.get('preferredImportPlacement', 'TopOfFile'),
         importOpacity: config.get('importOpacity', 0.45),
-        contextualImportTemplate: config.get('contextualImportTemplate', DEFAULT_CONTEXTUAL_IMPORT_TEMPLATE)
+        contextualImportTemplate: config.get('contextualImportTemplate', DEFAULT_CONTEXTUAL_IMPORT_TEMPLATE),
+        mode: config.get('mode', 'dynamic'),
+        explicitPathStyle: config.get('explicitPathStyle', 'alias'),
+        preferRelativePaths: config.get('preferRelativePaths', false),
+        rojoProjectPath: config.get('rojoProjectPath', 'default.project.json'),
+        sourcemapPath: config.get('sourcemapPath', 'sourcemap.json')
     };
+}
+
+/** @returns {'dynamic'|'explicit'} */
+function getMode() {
+    return getExtensionConfig().get('mode', 'dynamic');
+}
+
+/** @returns {'alias'|'relative'|'game'} */
+function getExplicitPathStyle() {
+    return getExtensionConfig().get('explicitPathStyle', 'alias');
+}
+
+/**
+ * Build conversion settings, in one place so every consumer agrees on the defaults.
+ * @returns {{enabled: boolean, outputDirectory: string, outputRequireStyle: 'string'|'find_first_child'|'wait_for_child'|'property', buildProjectFile: string}}
+ */
+function getBuildConversionConfig() {
+    const config = getExtensionConfig();
+    return {
+        enabled: config.get('buildConversion.enabled', false),
+        outputDirectory: config.get('buildConversion.outputDirectory', 'dist'),
+        outputRequireStyle: config.get('buildConversion.outputRequireStyle', 'string'),
+        buildProjectFile: config.get('buildConversion.buildProjectFile', 'build.project.json')
+    };
+}
+
+// The Luau runtime module can expand .luaurc aliases, so it is needed whenever require
+// strings contain them at runtime: always in dynamic mode, and in explicit mode with
+// alias-rooted paths. Roblox resolves relative and @game string requires natively — and
+// with Build conversion on, alias requires are rewritten at build time, so the module
+// (and its Import boilerplate) is never needed regardless of mode.
+function runtimeModuleRequired() {
+    if (getBuildConversionConfig().enabled) return false;
+    return getMode() === 'dynamic' || getExplicitPathStyle() === 'alias';
 }
 
 module.exports = {
@@ -121,5 +176,9 @@ module.exports = {
     shouldIgnoreDirectory,
     scanDirectory,
     getExtensionConfig,
-    getCommonConfig
+    getCommonConfig,
+    getMode,
+    getExplicitPathStyle,
+    getBuildConversionConfig,
+    runtimeModuleRequired
 };
