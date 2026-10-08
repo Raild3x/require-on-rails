@@ -7,7 +7,7 @@ const { exec } = require('child_process');
 let vscode = null;
 try { vscode = require('vscode'); } catch (e) { /* running outside VS Code */ }
 const { print, warn, error, debug, trace, showOutputChannel } = require('../core/logger');
-const { classifyBasenames, readLuaurc, normalizeAliases } = require('../core/projectIndex');
+const { classifyBasenames, readLuaurc, normalizeAliases, renderLuaurc } = require('../core/projectIndex');
 // Required lazily inside the editor-only functions, since workspaceUtils' settings accessors
 // are editor-only.
 /** @returns {typeof import('../utils/workspaceUtils')} */
@@ -375,17 +375,7 @@ function generateFileAliases() {
         `shadowed by manualAliases: ${shadowedByManual}, written to .luaurc: ${Object.keys(compiledAliases).length}`
     );
 
-    luaurc.aliases = compiledAliases;
-
-    // Create a proper JSON structure ensuring aliases is always an object
-    const finalLuaurc = {
-        aliases: compiledAliases || {},
-        ...Object.fromEntries(Object.entries(luaurc).filter(([key]) => key !== 'aliases'))
-    };
-
-    // Write with proper JSON formatting
-    const luaurcString = JSON.stringify(finalLuaurc, null, 4);
-    fs.writeFileSync(luaurcPath, luaurcString);
+    fs.writeFileSync(luaurcPath, renderLuaurc(luaurc, compiledAliases));
     // The index read .luaurc before this write; bring it up to date so resolution (explicit
     // features, the build watch) and diagnostics see the set just written.
     ctx.aliases = normalizeAliases(compiledAliases);

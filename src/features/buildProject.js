@@ -379,7 +379,8 @@ function walkAllFiles(dir, callback) {
  * @param {string} workspaceRoot
  * @param {BuildOptions} options
  * @param {ResolverContext} [ctx] - An index the caller already holds; built from options otherwise
- * @returns {{findings: BuildFinding[], filesConverted: number, filesCopied: number, requiresConverted: number, written: boolean}}
+ * @returns {{findings: BuildFinding[], filesConverted: number, filesCopied: number, requiresConverted: number, written: boolean, outputs: string[]}}
+ *   outputs lists the root-relative files the build writes — or would, when written is false
  */
 function runBuild(workspaceRoot, options, ctx = pathResolver.createContext(workspaceRoot, {
     directoriesToScan: options.directoriesToScan || [],
@@ -406,7 +407,7 @@ function runBuild(workspaceRoot, options, ctx = pathResolver.createContext(works
             message: `RequireOnRails build: outputRequireStyle "${outputRequireStyle}" emits instance paths, ` +
                 `which need a Rojo sourcemap (sourcemapPath) or project file (rojoProjectPath) to map files to the DataModel.`
         });
-        return { findings, filesConverted: 0, filesCopied: 0, requiresConverted: 0, written: false };
+        return { findings, filesConverted: 0, filesCopied: 0, requiresConverted: 0, written: false, outputs: [] };
     }
     if (outputRequireStyle === 'string' && !ctx.rojoMap) {
         print('build: no Rojo sourcemap or project mapping found — cloned-container detection is off, all requires render relative.');
@@ -440,8 +441,9 @@ function runBuild(workspaceRoot, options, ctx = pathResolver.createContext(works
         });
     }
 
+    const outputPaths = outputs.map(({ outPath }) => path.relative(workspaceRoot, outPath).replace(/\\/g, '/'));
     if (findings.length > 0 || dryRun) {
-        return { findings, filesConverted, filesCopied, requiresConverted, written: false };
+        return { findings, filesConverted, filesCopied, requiresConverted, written: false, outputs: outputPaths };
     }
 
     // Replace each mirrored subtree wholesale so deleted source files do not linger in the
@@ -455,7 +457,7 @@ function runBuild(workspaceRoot, options, ctx = pathResolver.createContext(works
     }
 
     print(`build: converted ${filesConverted} file(s) (${requiresConverted} require(s)), copied ${filesCopied} asset(s) into ${outputDirectory}/.`);
-    return { findings, filesConverted, filesCopied, requiresConverted, written: true };
+    return { findings, filesConverted, filesCopied, requiresConverted, written: true, outputs: outputPaths };
 }
 
 module.exports = {

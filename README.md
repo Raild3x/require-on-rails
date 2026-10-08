@@ -752,6 +752,48 @@ Pin `@v2` to receive fixes automatically, or a full version such as `@v2.3.0` to
 
 </details>
 
+## Command Line
+
+<details>
+<summary>Running RequireOnRails without the editor</summary>
+
+The extension's core operations are also commands, for scripts, other editors, and CI. It is
+plain Node (18.3 or newer) with no dependencies: run it from a clone of this repository, or
+`npm link` the clone once to get a `requireonrails` command on your PATH.
+
+```sh
+node path/to/require-on-rails/src/cli/main.js <command> [options]
+requireonrails <command> [options]          # after npm link
+```
+
+| Command | Mode | What it does |
+| --- | --- | --- |
+| `check` | Both | The CI checks above, printed as `file:line:col  message`. Exits 1 on findings unless `--warn-only`; `--verify-build` adds the build dry run |
+| `build` | Both | Writes the Build conversion output. Needs `buildConversion.enabled`; exits 1, writing nothing, if any require cannot be converted |
+| `generate-aliases` | Dynamic | Regenerates `.luaurc` from the file tree, as the extension does on every file change |
+| `rewrite` | Explicit | Re-renders every resolvable require in the current `explicitPathStyle` (the **Rewrite All Requires** command) |
+| `rename <from> <to>` | Both | Moves a file or folder, then fixes requires as the extension would after the same move. Where the extension asks first, the command goes ahead: in explicit mode `--skip-inbound` leaves requires elsewhere that point at the moved item untouched, and in dynamic mode `enableBasenameUpdates`, `enableAbsolutePathUpdates`, and `enableFileNameCollisionResolution` decide what happens. Dynamic mode then regenerates `.luaurc` |
+
+| Option | Description |
+| --- | --- |
+| `-C`, `--working-directory <dir>` | Project root (default: the current directory). `rename` paths are relative to it, as if run from there |
+| `--dry-run` | Report what would change without writing (`build`, `generate-aliases`, `rewrite`) |
+| `--json` | Print the full result as JSON on stdout — findings, the edits made or planned, files written. Progress logging goes to stderr |
+| `--warn-only` | `check`: exit 0 even with findings |
+| `--verify-build` | `check`: also dry-run the Build conversion |
+| `--skip-inbound` | `rename` in explicit mode: fix only the requires inside the moved item |
+
+Exit codes: `0` done, `1` findings or refused (wrong mode, settings errors, an unconvertible
+build), `2` usage error or unusable `rename` path, `3` failed unexpectedly.
+
+Commands read `requireonrails.json`, then the project's `.vscode/settings.json`, then defaults —
+the editor additionally layers your User settings in, so keep project-wide choices in the
+project files. Commands do nothing when those settings have errors. Hook commands
+(`onAliasesRegenerated`, `buildConversion.hooks.*`) never run from the command line; a script
+can run its own next step.
+
+</details>
+
 ## Troubleshooting
 <details>
 <summary>Common Issues</summary>

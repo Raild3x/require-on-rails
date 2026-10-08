@@ -433,7 +433,19 @@ function normalizeAliases(aliases) {
     return out;
 }
 
+// The .luaurc dynamic mode writes: the generated aliases first, every other key kept.
+/**
+ * @param {Record<string, any>} existing - The parsed current file, {} when there is none
+ * @param {Object<string, string>} aliases
+ * @returns {string}
+ */
+function renderLuaurc(existing, aliases) {
+    const others = Object.fromEntries(Object.entries(existing).filter(([key]) => key !== 'aliases'));
+    return JSON.stringify({ aliases, ...others }, null, 4);
+}
+
 module.exports = {
+    renderLuaurc,
     buildBasenameMap,
     classifyBasenames,
     compileIgnorePatterns,

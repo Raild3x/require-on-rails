@@ -363,5 +363,6 @@ if (require.main === module) {
     process.exitCode = main();
 }
 
-// Exported for the tests in test/cli; everything else is reached through the command line.
-module.exports = { loadConfig, parseJsonc };
+// The check itself is shared with the requireonrails command (cli/main.js); this file stays the
+// GitHub Action's entry point, reporting as annotations.
+module.exports = { loadConfig, parseJsonc, runChecks, summarize, ConfigError };

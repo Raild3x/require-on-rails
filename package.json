@@ -16,6 +16,9 @@
     "onStartupFinished"
   ],
   "main": "./src/extension.js",
+  "bin": {
+    "requireonrails": "./src/cli/main.js"
+  },
   "contributes": {
     "jsonValidation": [
       {
