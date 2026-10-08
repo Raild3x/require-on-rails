@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 
 // Import extension modules for testing
-const { updateRequireNames } = require('../../../src/features/updateRequireNames');
+const { handleDynamicRename } = require('../../../src/features/dynamicRename');
 
 // Import shared test utilities
 const {
@@ -37,7 +37,7 @@ suite('Require Statement Update Tests', () => {
         }
     });
 
-    test('Should detect file rename operation', () => {
+    test('Should detect file rename operation', async () => {
         const oldPath = path.join(testWorkspacePath, 'src/Server/OldName.luau');
         const newPath = path.join(testWorkspacePath, 'src/Server/NewName.luau');
         
@@ -48,7 +48,7 @@ suite('Require Statement Update Tests', () => {
 
         try {
             fs.renameSync(oldPath, newPath);
-            updateRequireNames(newPath, oldPath);
+            await handleDynamicRename(newPath, oldPath);
             
             assert.ok(messages.captured.info.some(msg => 
                 msg.includes('renamed') && msg.includes('OldName') && msg.includes('NewName')
@@ -60,7 +60,7 @@ suite('Require Statement Update Tests', () => {
         }
     });
 
-    test('Should detect file move operation', () => {
+    test('Should detect file move operation', async () => {
         const oldPath = path.join(testWorkspacePath, 'src/Server/TestFile.luau');
         const newPath = path.join(testWorkspacePath, 'src/Shared/TestFile.luau');
         
@@ -78,7 +78,7 @@ suite('Require Statement Update Tests', () => {
 
         try {
             fs.renameSync(oldPath, newPath);
-            updateRequireNames(newPath, oldPath);
+            await handleDynamicRename(newPath, oldPath);
             
             assert.ok(messages.captured.info.some(msg => 
                 msg.includes('absolute require paths') && 
@@ -93,7 +93,7 @@ suite('Require Statement Update Tests', () => {
     });
 
     test('Should verify move operation is detected correctly', () => {
-        const { analyzeFileOperation } = require('../../../src/features/updateRequireNames');
+        const { analyzeFileOperation } = require('../../../src/features/requirePlanner');
         
         const oldPath = path.join(testWorkspacePath, 'src/Server/TestFile.luau');
         const newPath = path.join(testWorkspacePath, 'src/Shared/TestFile.luau');
@@ -109,7 +109,7 @@ suite('Require Statement Update Tests', () => {
     });
 
     test('Should handle files with no extension change', () => {
-        const { analyzeFileOperation } = require('../../../src/features/updateRequireNames');
+        const { analyzeFileOperation } = require('../../../src/features/requirePlanner');
         
         const oldPath = path.join(testWorkspacePath, 'src/Server/Utils.luau');
         const newPath = path.join(testWorkspacePath, 'src/Shared/Utils.luau');
@@ -123,7 +123,7 @@ suite('Require Statement Update Tests', () => {
     });
 
     test('Should handle files with both directory and name change', () => {
-        const { analyzeFileOperation } = require('../../../src/features/updateRequireNames');
+        const { analyzeFileOperation } = require('../../../src/features/requirePlanner');
         
         const oldPath = path.join(testWorkspacePath, 'src/Server/OldUtils.luau');
         const newPath = path.join(testWorkspacePath, 'src/Shared/NewUtils.luau');
@@ -137,11 +137,85 @@ suite('Require Statement Update Tests', () => {
     });
 
     test('Should return null for identical paths', () => {
-        const { analyzeFileOperation } = require('../../../src/features/updateRequireNames');
+        const { analyzeFileOperation } = require('../../../src/features/requirePlanner');
         
         const samePath = path.join(testWorkspacePath, 'src/Server/Utils.luau');
         const operationInfo = analyzeFileOperation(samePath, samePath);
         
         assert.strictEqual(operationInfo, null, 'Should return null for identical paths');
+    });
+
+    test('Accepting the basename prompt rewrites exact requires and keeps their quotes', async () => {
+        const files = {
+            'src/Server/OldThing.luau': 'return {}',
+            'src/Server/UsesThing.luau': 'local A = require("@OldThing")\nlocal B = require(\'@OldThing\')\nlocal C = require("@OldThingy")\n-- require("@OldThing")\n'
+        };
+        for (const [rel, content] of Object.entries(files)) fs.writeFileSync(path.join(testWorkspacePath, rel), content);
+        const oldPath = path.join(testWorkspacePath, 'src/Server/OldThing.luau');
+        const newPath = path.join(testWorkspacePath, 'src/Server/NewThing.luau');
+
+        const messages = mockVSCodeMessages({ info: () => Promise.resolve('Yes') });
+        const restore = mockWorkspaceConfig(testWorkspaceUri, { enableAbsolutePathUpdates: false });
+        try {
+            fs.renameSync(oldPath, newPath);
+            await handleDynamicRename(newPath, oldPath);
+            assert.strictEqual(fs.readFileSync(path.join(testWorkspacePath, 'src/Server/UsesThing.luau'), 'utf8'),
+                'local A = require("@NewThing")\nlocal B = require(\'@NewThing\')\nlocal C = require("@OldThingy")\n-- require("@OldThing")\n');
+        } finally {
+            messages.restore();
+            restore();
+            cleanupTestFiles(testWorkspacePath, ['src/Server/OldThing.luau', 'src/Server/NewThing.luau', 'src/Server/UsesThing.luau']);
+        }
+    });
+
+    test('A colliding name is renamed to _Duplicate, and requires follow it', async () => {
+        const files = {
+            'src/Shared/Taken.luau': 'return {}',
+            'src/Server/Mine.luau': 'return {}',
+            'src/Server/UsesMine.luau': 'local M = require("@Mine")\n'
+        };
+        for (const [rel, content] of Object.entries(files)) fs.writeFileSync(path.join(testWorkspacePath, rel), content);
+        const oldPath = path.join(testWorkspacePath, 'src/Server/Mine.luau');
+        const newPath = path.join(testWorkspacePath, 'src/Server/Taken.luau');
+
+        const messages = mockVSCodeMessages({ info: () => Promise.resolve('Yes') });
+        const restore = mockWorkspaceConfig(testWorkspaceUri, { enableFileNameCollisionResolution: true, enableAbsolutePathUpdates: false });
+        try {
+            fs.renameSync(oldPath, newPath);
+            await handleDynamicRename(newPath, oldPath);
+            assert.ok(fs.existsSync(path.join(testWorkspacePath, 'src/Server/Taken_Duplicate.luau')), 'renamed on disk');
+            assert.ok(messages.captured.warning.some(msg => msg.includes('Taken_Duplicate')));
+            assert.strictEqual(fs.readFileSync(path.join(testWorkspacePath, 'src/Server/UsesMine.luau'), 'utf8'),
+                'local M = require("@Taken_Duplicate")\n');
+        } finally {
+            messages.restore();
+            restore();
+            cleanupTestFiles(testWorkspacePath, ['src/Shared/Taken.luau', 'src/Server/Taken.luau', 'src/Server/Taken_Duplicate.luau', 'src/Server/UsesMine.luau']);
+        }
+    });
+
+    test('A collision never overwrites an existing _Duplicate file', async () => {
+        const files = {
+            'src/Shared/Taken.luau': 'return {}',
+            'src/Server/Taken_Duplicate.luau': 'return "keep me"',
+            'src/Server/Mine.luau': 'return {}'
+        };
+        for (const [rel, content] of Object.entries(files)) fs.writeFileSync(path.join(testWorkspacePath, rel), content);
+        const oldPath = path.join(testWorkspacePath, 'src/Server/Mine.luau');
+        const newPath = path.join(testWorkspacePath, 'src/Server/Taken.luau');
+
+        const messages = mockVSCodeMessages();
+        const restore = mockWorkspaceConfig(testWorkspaceUri, { enableFileNameCollisionResolution: true, enableAbsolutePathUpdates: false });
+        try {
+            fs.renameSync(oldPath, newPath);
+            await handleDynamicRename(newPath, oldPath);
+            assert.strictEqual(fs.readFileSync(path.join(testWorkspacePath, 'src/Server/Taken_Duplicate.luau'), 'utf8'), 'return "keep me"');
+            assert.ok(fs.existsSync(newPath), 'the renamed file stays where the user put it');
+            assert.ok(messages.captured.warning.some(msg => msg.includes('already exists')));
+        } finally {
+            messages.restore();
+            restore();
+            cleanupTestFiles(testWorkspacePath, ['src/Shared/Taken.luau', 'src/Server/Taken.luau', 'src/Server/Taken_Duplicate.luau']);
+        }
     });
 });

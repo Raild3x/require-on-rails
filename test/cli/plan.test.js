@@ -6,7 +6,13 @@ const os = require('os');
 const path = require('path');
 
 const { applyEdits, writeEdits } = require('../../src/core/plan');
-const { planRewriteAll, planRename } = require('../../src/features/requirePlanner');
+const {
+    planRewriteAll,
+    planRename,
+    planCollisionRename,
+    planAbsoluteAliasPaths,
+    planSpecRewrite
+} = require('../../src/features/requirePlanner');
 const pathResolver = require('../../src/features/pathResolver');
 const {
     planAddImport,
@@ -145,6 +151,48 @@ suite('Plan: adding the Import boilerplate', () => {
     test('The boilerplate and its selene comment are the lines to dim', () => {
         const text = `-- selene: allow(incorrect_standard_library_use)\n${added('local A = require("@A")\n', 'TopOfFile')}`;
         assert.deepStrictEqual(importLinesToDim(text, [IMPORT]), [0, 1, 2]);
+    });
+});
+
+suite('Plan: dynamic-mode renames', () => {
+    test('A name already taken by another module gets a _Duplicate rename beside it', () => {
+        const root = makeFixture({
+            'src/Utilities/Util.luau': 'return {}\n',
+            'src/Shared/Util/init.luau': 'return {}\n'
+        });
+        try {
+            const { ctx } = indexOf(root);
+            // The folder named like the file must not be rewritten: only the basename changes.
+            assert.deepStrictEqual(planCollisionRename(ctx, 'src/Utilities/Util.luau', 'Util'),
+                { newRel: 'src/Utilities/Util_Duplicate.luau', newBasename: 'Util_Duplicate' });
+            assert.strictEqual(planCollisionRename(ctx, 'src/Utilities/Util.luau', 'Free'), null);
+            // A renamed folder does not collide with its own init file.
+            assert.strictEqual(planCollisionRename(ctx, 'src/Shared/Util', 'Util')?.newRel, 'src/Shared/Util_Duplicate');
+        } finally {
+            fs.rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    test("A move maps between the '@' manualAliases it falls under", () => {
+        const aliases = { '@Server': 'src/Server', '@Shared': 'src/Shared', Bare: 'src/Bare' };
+        assert.deepStrictEqual(planAbsoluteAliasPaths('src/Server/Systems/Foo.luau', 'src/Shared/Foo.luau', aliases),
+            { oldPath: '@Server/Systems/Foo', newPath: '@Shared/Foo' });
+        assert.strictEqual(planAbsoluteAliasPaths('src/Bare/Foo.luau', 'src/Shared/Foo.luau', aliases), null, 'bare keys are not absolute aliases');
+        assert.strictEqual(planAbsoluteAliasPaths('src/Shared/Foo.luau', 'src/Shared/Foo.luau', aliases), null);
+    });
+
+    test('Exact spec rewrites leave longer specs and comments alone', () => {
+        const root = makeFixture({
+            'src/Main.luau': 'local A = require("@Old")\nlocal B = require(\'@Old\')\nlocal C = require("@Old/Child")\n-- require("@Old")\n'
+        });
+        try {
+            const { ctx, texts } = indexOf(root);
+            writeEdits(root, planSpecRewrite(ctx, texts, '@Old', '@New'));
+            assert.strictEqual(fs.readFileSync(path.join(root, 'src/Main.luau'), 'utf8'),
+                'local A = require("@New")\nlocal B = require(\'@New\')\nlocal C = require("@Old/Child")\n-- require("@Old")\n');
+        } finally {
+            fs.rmSync(root, { recursive: true, force: true });
+        }
     });
 });
 

@@ -14,7 +14,7 @@ const {
     clearAliasDiagnostics,
     disposeAliasDiagnostics
 } = require('./features/aliasDiagnostics');
-const { updateRequireNames } = require('./features/updateRequireNames');
+const { handleRenameEventDynamic } = require('./features/dynamicRename');
 const { hideLines, unhideLines } = require('./features/hideLines');
 const { unpackProjectTemplate } = require('./commands/unpackProjectTemplate');
 const { downloadLuauModule } = require('./commands/downloadLuauModule');
@@ -203,14 +203,12 @@ function enableEventListeners() {
 
     // Listen for file renames to update require statements
     const renameListener = vscode.workspace.onDidRenameFiles((event) => {
-        if (getMode() === 'explicit') {
-            // Full-path rewrites: inbound requires prompted, outbound relative fixed.
-            explicitMode.handleRenameEventExplicit(event.files);
-        } else {
-            event.files.forEach((file) => {
-                updateRequireNames(file.newUri.fsPath, file.oldUri.fsPath);
-            });
-        }
+        // Explicit: full-path rewrites, inbound requires prompted, outbound relative fixed.
+        // Dynamic: exact alias rewrites behind the enable* settings.
+        const handled = getMode() === 'explicit'
+            ? explicitMode.handleRenameEventExplicit(event.files)
+            : handleRenameEventDynamic(event.files);
+        handled.catch(e => error('Updating requires after a rename failed:', e));
         // Renaming a *folder* only emits watcher events for the folder path, which matches
         // neither **/*.luau nor **/*.lua, so the watchers never fire. A folder holding an
         // init file owns an alias named after the folder, and every file under a renamed

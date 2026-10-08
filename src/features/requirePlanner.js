@@ -1,6 +1,7 @@
-// Explicit mode's require rewrites as plans (a Plan, or a RenamePlan split by consent): what
-// to change and what could not be, with no editor dependency. explicitMode applies them as WorkspaceEdits (prompting where a rewrite
-// needs consent); headless callers apply them with core/plan.writeEdits.
+// Require rewrites as plans: what to change and what could not be, with no editor
+// dependency. Explicit mode's (a Plan, or a RenamePlan split by consent) are applied by
+// explicitMode as WorkspaceEdits; dynamic mode's exact-spec rewrites by dynamicRename with
+// core/plan.writeEdits, which headless callers use too.
 
 const fs = require('fs');
 const path = require('path');
@@ -205,9 +206,106 @@ function planRename(ctx, readTexts, moves, render) {
     return { outbound, inbound, movedFrom: renames.map(r => r.oldRel) };
 }
 
+// ---------------------------------------------------------------------------
+// Dynamic mode. Requires name aliases ("@Foo", "@Server/Systems/Foo"), so a rename is
+// answered with exact spec rewrites, each behind its own setting and prompt.
+// ---------------------------------------------------------------------------
+
+/** @typedef {'renamed' | 'moved' | 'moved and renamed'} OperationType */
+
+/**
+ * Whether a rename/move changed the directory, the file name, or both.
+ * @param {string} newFilePath
+ * @param {string} oldFilePath
+ * @returns {{operationType: OperationType, isMove: boolean, isRename: boolean, oldFileBasename: string, newFileBasename: string} | null}
+ *   Basenames are without extension; null when nothing changed
+ */
+function analyzeFileOperation(newFilePath, oldFilePath) {
+    const isMove = path.dirname(oldFilePath) !== path.dirname(newFilePath);
+    const isRename = path.basename(oldFilePath) !== path.basename(newFilePath);
+
+    /** @type {OperationType} */
+    let operationType;
+    if (isMove && isRename) operationType = 'moved and renamed';
+    else if (isMove) operationType = 'moved';
+    else if (isRename) operationType = 'renamed';
+    else return null;
+
+    return {
+        operationType,
+        isMove,
+        isRename,
+        oldFileBasename: path.basename(oldFilePath, path.extname(oldFilePath)),
+        newFileBasename: path.basename(newFilePath, path.extname(newFilePath))
+    };
+}
+
+/**
+ * When a renamed module's new name is already another module's — which would make the
+ * generated alias ambiguous — the "<name>_Duplicate" rename that keeps it unique.
+ * @param {ResolverContext} ctx - Built after the rename
+ * @param {string} newRel - Root-relative path of the renamed file or folder
+ * @param {string} newBasename
+ * @returns {{newRel: string, newBasename: string} | null} null when the name is free
+ */
+function planCollisionRename(ctx, newRel, newBasename) {
+    const others = (ctx.targets[newBasename] || []).filter(target => target !== newRel && !target.startsWith(newRel + '/'));
+    if (others.length === 0) return null;
+    const renamedBasename = `${newBasename}_Duplicate`;
+    const dir = path.posix.dirname(newRel);
+    const renamed = `${renamedBasename}${path.posix.extname(newRel)}`;
+    return { newRel: dir === '.' ? renamed : `${dir}/${renamed}`, newBasename: renamedBasename };
+}
+
+/**
+ * The alias paths a move maps a module between, by the '@'-prefixed manualAliases entries:
+ * "src/Server/Systems/Foo.luau" under {"@Server": "src/Server"} is "@Server/Systems/Foo".
+ * @param {string} oldRel
+ * @param {string} newRel
+ * @param {Record<string, string>} manualAliases
+ * @returns {{oldPath: string, newPath: string} | null} null unless both ends map and differ
+ */
+function planAbsoluteAliasPaths(oldRel, newRel, manualAliases) {
+    /** @param {string} rel */
+    const aliasPathOf = rel => {
+        for (const [alias, aliasPath] of Object.entries(manualAliases)) {
+            if (!alias.startsWith('@')) continue;
+            const prefix = aliasPath.replace(/\\/g, '/');
+            if (rel.startsWith(prefix)) return alias + rel.substring(prefix.length).replace(/\.(luau|lua)$/, '');
+        }
+        return null;
+    };
+    const oldPath = aliasPathOf(oldRel);
+    const newPath = aliasPathOf(newRel);
+    return oldPath && newPath && oldPath !== newPath ? { oldPath, newPath } : null;
+}
+
+/**
+ * Rewrites every require whose string is exactly `fromSpec` to `toSpec`, keeping its quotes.
+ * @param {ResolverContext} ctx
+ * @param {Map<string, string>} texts - From pathResolver.readSourceTexts
+ * @param {string} fromSpec - e.g. "@Foo" or "@Server/Systems/Foo"
+ * @param {string} toSpec
+ * @returns {Edit[]}
+ */
+function planSpecRewrite(ctx, texts, fromSpec, toSpec) {
+    /** @type {Edit[]} */
+    const edits = [];
+    for (const [filePath, text] of texts) {
+        for (const found of pathResolver.findRequireStrings(text)) {
+            if (found.spec === fromSpec) edits.push(requireEdit(toRel(ctx, filePath), found, toSpec));
+        }
+    }
+    return edits;
+}
+
 module.exports = {
     renderFor,
     computeReplacement,
     planRewriteAll,
-    planRename
+    planRename,
+    analyzeFileOperation,
+    planCollisionRename,
+    planAbsoluteAliasPaths,
+    planSpecRewrite
 };

@@ -2,7 +2,7 @@ const path = require('path');
 const vscode = require('vscode');
 const { print, debug } = require('../core/logger');
 const pathResolver = require('./pathResolver');
-const { getSettings, getContext, refreshContext, openDocumentTexts, toWorkspaceEdit } = require('../utils/workspaceUtils');
+const { getSettings, settingsHaveErrors, getContext, refreshContext, openDocumentTexts, toWorkspaceEdit } = require('../utils/workspaceUtils');
 const { renderOptions } = require('../core/settings');
 const planner = require('./requirePlanner');
 const { planRename, planRewriteAll } = planner;
@@ -270,6 +270,8 @@ function onWillSave(event) {
 async function handleRenameEventExplicit(files) {
     const workspaceRoot = getWorkspaceRoot();
     if (!workspaceRoot) return;
+    // Rewrites refuse to run on settings that did not resolve (ADR 0004).
+    if (settingsHaveErrors()) return;
 
     // Renames already happened on disk, so a fresh context sees the new world; where a
     // require *used* to point is recovered by the planner without existence probing.
