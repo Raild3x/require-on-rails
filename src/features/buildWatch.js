@@ -2,10 +2,9 @@ const fs = require('fs');
 const path = require('path');
 const vscode = require('vscode');
 const { warn, debug } = require('../core/logger');
-const pathResolver = require('./pathResolver');
 const { runBuild, convertOrCopyFile } = require('./buildProject');
 const { runHookCommands } = require('./updateLuaFileAliases');
-const { getSettings, getBuildConversionConfig, settingsHaveErrors } = require('../utils/workspaceUtils');
+const { getSettings, getBuildConversionConfig, settingsHaveErrors, getContext, refreshContext } = require('../utils/workspaceUtils');
 const settings = require('../core/settings');
 
 // Watch pipeline: keeps the Build conversion output directory continuously fresh, so
@@ -123,7 +122,7 @@ function attemptWrite(rel, { ignoreDiagnostics = false } = {}) {
     // they surface on explicit builds and Checks. Retried naturally on the next save.
     /** @type {import('./buildProject').BuildFinding[]} */
     const findings = [];
-    const ctx = pathResolver.getContext() || pathResolver.refreshContext();
+    const ctx = getContext();
     if (!ctx) return;
     const result = convertOrCopyFile(workspaceRoot, rel, ctx, {
         outputRequireStyle: build.outputRequireStyle,
@@ -255,7 +254,11 @@ function runFullRebuild() {
     for (const rel of [..._held.keys()]) clearHold(rel);
     _deleted.clear();
 
-    const result = runBuild(workspaceRoot, buildOptionsFromConfig());
+    // A full rebuild is a resolution-context boundary, so it walks fresh and leaves the
+    // editor's index current for the per-save writes that follow.
+    const ctx = refreshContext();
+    if (!ctx) return;
+    const result = runBuild(workspaceRoot, buildOptionsFromConfig(), ctx);
     if (result.findings.length > 0) {
         // Quiet by design: the previous output stays in place, and the findings will
         // surface with full detail on the next explicit build or Check.

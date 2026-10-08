@@ -3,8 +3,7 @@ const path = require('path');
 const vscode = require('vscode');
 const { print, debug } = require('../core/logger');
 const pathResolver = require('./pathResolver');
-const { getSettings } = require('../utils/workspaceUtils');
-const { asConfigLike } = require('../core/settings');
+const { getSettings, getContext, refreshContext, openDocumentTexts } = require('../utils/workspaceUtils');
 
 const LANGUAGES = ['luau', 'lua'];
 
@@ -36,7 +35,7 @@ function toRel(workspaceRoot, fsPath) {
 
 /** @returns {ResolverContext | null} */
 function getCtx() {
-    return pathResolver.getContext() || pathResolver.refreshContext();
+    return getContext();
 }
 
 /**
@@ -299,7 +298,7 @@ async function handleRenameEventExplicit(files) {
 
     // Renames already happened on disk, so a fresh context sees the new world; where a
     // require *used* to point is recovered with resolveModulePath (no existence probing).
-    const ctx = pathResolver.refreshContext();
+    const ctx = refreshContext();
     if (!ctx) return;
 
     const renames = [];
@@ -325,8 +324,7 @@ async function handleRenameEventExplicit(files) {
     }
     if (renames.length === 0) return;
 
-    const config = asConfigLike(getSettings());
-    const texts = pathResolver.readSourceTexts(workspaceRoot, config);
+    const texts = pathResolver.readSourceTexts(ctx, openDocumentTexts());
 
     const inboundEdit = new vscode.WorkspaceEdit();
     const outboundEdit = new vscode.WorkspaceEdit();
@@ -423,16 +421,15 @@ async function rewriteAllRequires() {
         return;
     }
 
-    const ctx = pathResolver.refreshContext();
+    const ctx = refreshContext();
     if (!ctx) return;
 
-    const config = asConfigLike(getSettings());
     const workspaceEdit = new vscode.WorkspaceEdit();
     let count = 0;
     const filesTouched = new Set();
     let unresolvable = 0;
 
-    for (const [filePath, text] of pathResolver.readSourceTexts(workspaceRoot, config)) {
+    for (const [filePath, text] of pathResolver.readSourceTexts(ctx, openDocumentTexts())) {
         const fromRel = toRel(workspaceRoot, filePath);
         const uri = vscode.Uri.file(filePath);
 

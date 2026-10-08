@@ -9,8 +9,8 @@ const { print, warn, errMsg } = require('../core/logger');
 const {
     DEFAULT_CONTEXTUAL_IMPORT_TEMPLATE,
     getCommonConfig,
-    scanDirectory,
-    requireWorkspaceRoot
+    requireWorkspaceRoot,
+    refreshContext
 } = require('../utils/workspaceUtils');
 
 /**
@@ -22,7 +22,7 @@ function addImportToAllFiles() {
     if (!workspaceRoot) return;
 
     const config = getCommonConfig();
-    const { directoriesToScan, ignoreDirectories, importModulePaths, contextualImportTemplate } = config;
+    const { importModulePaths, contextualImportTemplate } = config;
     const pathsArray = Array.isArray(importModulePaths) ? importModulePaths : [importModulePaths];
     const defaultImportModulePath = pathsArray[0];
     
@@ -31,20 +31,9 @@ function addImportToAllFiles() {
         return;
     }
 
-    /** @type {string[]} */
-    const filesToProcess = [];
-
-    // Scan all directories for files that need the import
-    directoriesToScan.forEach(dir => {
-        const dirPath = path.join(workspaceRoot, dir);
-        if (fs.existsSync(dirPath) && fs.statSync(dirPath).isDirectory()) {
-            scanDirectory(dirPath, config.supportedExtensions, ignoreDirectories, (/** @type {string} */ filePath) => {
-                if (fileNeedsImport(filePath, importModulePaths)) {
-                    filesToProcess.push(filePath);
-                }
-            });
-        }
-    });
+    // A one-shot command walks fresh rather than trusting the watcher-maintained index.
+    const filesToProcess = (refreshContext()?.sourceFiles ?? [])
+        .filter(filePath => fileNeedsImport(filePath, importModulePaths));
 
     if (filesToProcess.length === 0) {
         vscode.window.showInformationMessage('RequireOnRails: No files found that need the import require definition.');
@@ -60,23 +49,6 @@ function addImportToAllFiles() {
             showFilesPreview(filesToProcess, defaultImportModulePath, contextualImportTemplate);
         } else if (selection === 'Yes') {
             addImportToFiles(filesToProcess, defaultImportModulePath, workspaceRoot, contextualImportTemplate);
-        }
-    });
-}
-
-/**
- * Recursively scans directories for files that use custom aliases but lack import definition
- * @param {string} dir - Directory to scan
- * @param {string|string[]} importModulePaths - Configured import module path(s)
- * @param {string[]} ignoreDirectories - Directory name patterns to skip
- * @param {string[]} filesToProcess - Accumulator that receives matching file paths
- * @returns {void}
- */
-function scanForFilesNeedingImport(dir, importModulePaths, ignoreDirectories, filesToProcess) {
-    const config = getCommonConfig();
-    scanDirectory(dir, config.supportedExtensions, ignoreDirectories, (/** @type {string} */ filePath) => {
-        if (fileNeedsImport(filePath, importModulePaths)) {
-            filesToProcess.push(filePath);
         }
     });
 }
@@ -281,19 +253,6 @@ function fileNeedsImport(filePath, importModulePaths) {
 }
 
 /**
- * Helper function to check if directory should be ignored
- * @param {string} dirName
- * @param {string[]} ignorePatterns
- * @returns {boolean}
- */
-function shouldIgnoreDirectory(dirName, ignorePatterns) {
-    // This is now handled by workspaceUtils.shouldIgnoreDirectory
-    // Keeping this function for backwards compatibility
-    const { shouldIgnoreDirectory: utilsShouldIgnore } = require('../utils/workspaceUtils');
-    return utilsShouldIgnore(dirName, ignorePatterns);
-}
-
-/**
  * Shows a preview of files that will be modified
  * @param {string[]} filesToProcess
  * @param {string} defaultImportModulePath
@@ -493,25 +452,21 @@ function removeImportFromAllFiles() {
     if (!workspaceRoot) return;
 
     const config = getCommonConfig();
-    const { directoriesToScan, ignoreDirectories, importModulePaths } = config;
+    const { importModulePaths } = config;
 
     /** @type {{filePath: string, stripped: {text: string, removed: number}}[]} */
     const pending = [];
-    directoriesToScan.forEach(dir => {
-        const dirPath = path.join(workspaceRoot, dir);
-        if (!fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) return;
-        scanDirectory(dirPath, config.supportedExtensions, ignoreDirectories, (/** @type {string} */ filePath) => {
-            let content;
-            try {
-                content = fs.readFileSync(filePath, 'utf8');
-            } catch (e) {
-                warn(`Error reading file ${filePath}:`, errMsg(e));
-                return;
-            }
-            const stripped = stripImportLines(content, importModulePaths);
-            if (stripped.removed > 0) pending.push({ filePath, stripped });
-        });
-    });
+    for (const filePath of refreshContext()?.sourceFiles ?? []) {
+        let content;
+        try {
+            content = fs.readFileSync(filePath, 'utf8');
+        } catch (e) {
+            warn(`Error reading file ${filePath}:`, errMsg(e));
+            continue;
+        }
+        const stripped = stripImportLines(content, importModulePaths);
+        if (stripped.removed > 0) pending.push({ filePath, stripped });
+    }
 
     if (pending.length === 0) {
         vscode.window.showInformationMessage('RequireOnRails: no files contain the Import boilerplate.');

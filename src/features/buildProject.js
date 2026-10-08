@@ -378,9 +378,16 @@ function walkAllFiles(dir, callback) {
  *
  * @param {string} workspaceRoot
  * @param {BuildOptions} options
+ * @param {ResolverContext} [ctx] - An index the caller already holds; built from options otherwise
  * @returns {{findings: BuildFinding[], filesConverted: number, filesCopied: number, requiresConverted: number, written: boolean}}
  */
-function runBuild(workspaceRoot, options) {
+function runBuild(workspaceRoot, options, ctx = pathResolver.createContext(workspaceRoot, {
+    directoriesToScan: options.directoriesToScan || [],
+    ignoreDirectories: options.ignoreDirectories || [],
+    pathPriority: options.pathPriority || [],
+    sourcemapPath: options.sourcemapPath || 'sourcemap.json',
+    rojoProjectPath: options.rojoProjectPath || 'default.project.json'
+})) {
     const {
         directoriesToScan = [],
         importModulePaths = [],
@@ -388,14 +395,6 @@ function runBuild(workspaceRoot, options) {
         outputRequireStyle = 'string',
         dryRun = false
     } = options;
-
-    const ctx = pathResolver.createContext(workspaceRoot, {
-        directoriesToScan,
-        ignoreDirectories: options.ignoreDirectories || [],
-        pathPriority: options.pathPriority || [],
-        sourcemapPath: options.sourcemapPath || 'sourcemap.json',
-        rojoProjectPath: options.rojoProjectPath || 'default.project.json'
-    });
 
     /** @type {BuildFinding[]} */
     const findings = [];

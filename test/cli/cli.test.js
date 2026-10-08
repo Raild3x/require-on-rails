@@ -1,11 +1,14 @@
 // Headless tests for the CI checker. Unlike every suite under test/vs-code-extension, these
 // run in plain Node — which is the point: the checker must work with no editor present.
 const assert = require('assert');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
 const { parseJsonc, loadConfig } = require('../../src/cli/check');
-const { classifyBasenames } = require('../../src/features/updateLuaFileAliases');
+const { classifyBasenames, readLuaurc, normalizeAliases } = require('../../src/core/projectIndex');
+const pathResolver = require('../../src/features/pathResolver');
 
 const REPO_ROOT = path.join(__dirname, '..', '..');
 const FIXTURE = path.join('test', 'ci-fixture');
@@ -112,6 +115,70 @@ suite('CLI: alias classification', () => {
             { manualAliases: { Solo: 'src/Elsewhere' } });
         assert.strictEqual(result.aliases.Solo, 'src/Elsewhere');
         assert.strictEqual(result.shadowedByManual, 1);
+    });
+});
+
+suite('Project index: .luaurc and ignoreDirectories', () => {
+    /** @type {string} */
+    let root;
+
+    suiteSetup(() => {
+        root = fs.mkdtempSync(path.join(os.tmpdir(), 'ror-index-'));
+        const files = {
+            // Luau accepts comments and trailing commas here, so every reader must too.
+            '.luaurc': '{\n    // generated\n    "aliases": {\n        "@Shared": "./src/Shared/",\n    },\n}\n',
+            'src/Shared/Util.luau': 'return {}\n',
+            'src/Server/Main.luau': 'local Util = require("@Shared/Util")\n',
+            'src/Server/Vendor/Lib.luau': 'return {}\n'
+        };
+        for (const [rel, content] of Object.entries(files)) {
+            fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+            fs.writeFileSync(path.join(root, rel), content, 'utf8');
+        }
+    });
+
+    suiteTeardown(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    test('A JSONC .luaurc is read, with alias keys and values normalized', () => {
+        assert.deepStrictEqual(normalizeAliases(readLuaurc(root)?.aliases), { Shared: 'src/Shared' });
+    });
+
+    test('Resolution sees the aliases of a JSONC .luaurc', () => {
+        const ctx = pathResolver.createContext(root, { directoriesToScan: ['src'] });
+        assert.deepStrictEqual(pathResolver.resolveRequire('@Shared/Util', 'src/Server/Main.luau', ctx),
+            { status: 'resolved', target: 'src/Shared/Util.luau' });
+    });
+
+    test('readLuaurc: absent is null, blank is empty, malformed throws', () => {
+        const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'ror-luaurc-'));
+        try {
+            assert.strictEqual(readLuaurc(scratch), null);
+            fs.writeFileSync(path.join(scratch, '.luaurc'), '  \n');
+            assert.deepStrictEqual(readLuaurc(scratch), {});
+            fs.writeFileSync(path.join(scratch, '.luaurc'), '{ "aliases": ');
+            assert.throws(() => readLuaurc(scratch));
+            // The index keeps the failure, so "no aliases" and "aliases unknowable" stay distinct.
+            const ctx = pathResolver.createContext(scratch);
+            assert.deepStrictEqual(ctx.aliases, {});
+            assert.ok(ctx.luaurcError, 'a malformed .luaurc is recorded on the index');
+            assert.strictEqual(pathResolver.createContext(root).luaurcError, null);
+        } finally {
+            fs.rmSync(scratch, { recursive: true, force: true });
+        }
+    });
+
+    /** @param {string[]} ignoreDirectories */
+    function collected(ignoreDirectories) {
+        return pathResolver.createContext(root, { directoriesToScan: ['src'], ignoreDirectories }).sourceFiles
+            .map(f => path.relative(root, f).replace(/\\/g, '/')).sort();
+    }
+
+    test('A path-style ignoreDirectories entry prunes the index by root-relative path', () => {
+        assert.deepStrictEqual(collected(['src/Server/Vendor']), ['src/Server/Main.luau', 'src/Shared/Util.luau']);
+    });
+
+    test('A backslash in an ignoreDirectories entry is a regex escape, not a path separator', () => {
+        assert.deepStrictEqual(collected(['^Vendo\\w$']), ['src/Server/Main.luau', 'src/Shared/Util.luau']);
     });
 });
 

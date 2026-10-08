@@ -325,16 +325,6 @@ function hasErrorFindings(findings) {
     return findings.some(f => f.severity === 'error');
 }
 
-// The one-method slice of vscode.WorkspaceConfiguration the resolver helpers consume
-// (pathResolver.ConfigLike), backed by resolved settings so every reader sees the full chain.
-/**
- * @param {SettingsMap} settings
- * @returns {{get: (key: string, fallback?: any) => any}}
- */
-function asConfigLike(settings) {
-    return { get: (key, fallback) => (settings[key] === undefined ? fallback : settings[key]) };
-}
-
 // The settings bundle the resolver needs, in one place instead of assembled at each call
 // site. createContext applies its own defaults, but every key here is always present.
 /**
@@ -412,7 +402,6 @@ module.exports = {
     readProjectFile,
     resolveSettings,
     hasErrorFindings,
-    asConfigLike,
     resolverOptions,
     buildOptions,
     projectFileExists,

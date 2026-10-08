@@ -1,29 +1,25 @@
 const fs = require('fs');
 const path = require('path');
 const vscode = require('vscode');
-const { print, warn } = require('../core/logger');
+const { print } = require('../core/logger');
+const { compileIgnorePatterns, findIgnoreMatch } = require('../core/projectIndex');
 
 const requirePrefix = '@';
 const supportedExtensions = ['.lua', '.luau'];
 
 /** @typedef {'renamed' | 'moved' | 'moved and renamed'} OperationType */
 
+// Delegates to the project index's matcher so ignoreDirectories means the same thing here
+// as everywhere else, path patterns included.
 /**
- * Helper function to check if directory should be ignored based on regex patterns.
- * 
- * @param {string} dirName - Directory name to check
- * @param {string[]} ignorePatterns - Array of regex patterns or strings to match against
- * @returns {boolean} True if directory should be ignored
+ * @param {string} fullPath - Absolute directory path
+ * @param {string} workspaceRoot
+ * @param {string[]} ignorePatterns
+ * @returns {boolean}
  */
-function shouldIgnoreDirectory(dirName, ignorePatterns) {
-    return ignorePatterns.some(pattern => {
-        try {
-            return new RegExp(pattern).test(dirName);
-        } catch (e) {
-            warn(`Invalid regex pattern: ${pattern}, falling back to exact match`);
-            return dirName.toLowerCase() === pattern.toLowerCase();
-        }
-    });
+function shouldIgnoreDirectory(fullPath, workspaceRoot, ignorePatterns) {
+    const relPath = path.relative(workspaceRoot, fullPath).replace(/\\/g, '/');
+    return !!findIgnoreMatch(compileIgnorePatterns(ignorePatterns), path.basename(fullPath), relPath);
 }
 
 /**
@@ -165,7 +161,7 @@ function handleFilenameCollision(newFilePath, newFileBasename, workspaceRoot) {
                         }
                     }
                 }
-                if (shouldIgnoreDirectory(path.basename(fullPath), ignoreDirectories)) continue;
+                if (shouldIgnoreDirectory(fullPath, workspaceRoot, ignoreDirectories)) continue;
                 if (checkForCollision(fullPath)) return true;
             } else if (supportedExtensions.includes(path.extname(file))) {
                 const fileBasename = path.basename(file, path.extname(file));
@@ -271,7 +267,7 @@ function updateBasenameRequiresInFiles(oldFileBasename, newFileBasename, workspa
         for (const file of files) {
             const fullPath = path.join(directory, file);
             if (fs.statSync(fullPath).isDirectory()) {
-                if (shouldIgnoreDirectory(path.basename(fullPath), ignoreDirectories)) continue;
+                if (shouldIgnoreDirectory(fullPath, workspaceRoot, ignoreDirectories)) continue;
                 processDirectory(fullPath);
             } else if (supportedExtensions.includes(path.extname(file))) {
                 updateRequiresInFile(fullPath);
@@ -389,7 +385,7 @@ function updateAbsoluteRequireInFiles(oldAbsolutePath, newAbsolutePath, workspac
         for (const file of files) {
             const fullPath = path.join(directory, file);
             if (fs.statSync(fullPath).isDirectory()) {
-                if (shouldIgnoreDirectory(path.basename(fullPath), ignoreDirectories)) continue;
+                if (shouldIgnoreDirectory(fullPath, workspaceRoot, ignoreDirectories)) continue;
                 processDirectory(fullPath);
             } else if (supportedExtensions.includes(path.extname(file))) {
                 updateAbsoluteRequiresInFile(fullPath);

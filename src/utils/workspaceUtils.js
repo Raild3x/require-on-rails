@@ -3,10 +3,9 @@
 /** @type {typeof import('vscode') | null} */
 let vscode = null;
 try { vscode = require('vscode'); } catch (e) { /* running outside VS Code */ }
-const fs = require('fs');
-const path = require('path');
-const { warn, errMsg } = require('../core/logger');
 const settings = require('../core/settings');
+const pathResolver = require('../features/pathResolver');
+const { debug } = require('../core/logger');
 const { SCHEMA } = require('../core/settingsSchema');
 
 const DEFAULT_CONTEXTUAL_IMPORT_TEMPLATE = [
@@ -41,52 +40,6 @@ function requireWorkspaceRoot(operationName = 'operation') {
         return null;
     }
     return getWorkspaceRoot();
-}
-
-/**
- * Checks if a directory should be ignored based on regex patterns
- * @param {string} dirName - Directory name to check
- * @param {string[]} ignorePatterns - Array of regex patterns
- * @returns {boolean} - True if directory should be ignored
- */
-function shouldIgnoreDirectory(dirName, ignorePatterns) {
-    return ignorePatterns.some(pattern => {
-        try {
-            return new RegExp(pattern).test(dirName);
-        } catch (e) {
-            warn(`Invalid regex pattern: ${pattern}, falling back to exact match`);
-            return dirName.toLowerCase() === pattern.toLowerCase();
-        }
-    });
-}
-
-/**
- * Recursively scans a directory for files with supported extensions
- * @param {string} dir - Directory to scan
- * @param {string[]} supportedExtensions - Array of file extensions (e.g., ['.lua', '.luau'])
- * @param {string[]} ignoreDirectories - Array of directory patterns to ignore
- * @param {function} callback - Function to call for each file found
- */
-function scanDirectory(dir, supportedExtensions, ignoreDirectories, callback) {
-    try {
-        const files = fs.readdirSync(dir, { withFileTypes: true });
-        
-        for (const file of files) {
-            const fullPath = path.join(dir, file.name);
-            
-            if (file.isDirectory()) {
-                // Check if directory should be ignored
-                if (shouldIgnoreDirectory(path.basename(fullPath), ignoreDirectories)) {
-                    continue;
-                }
-                scanDirectory(fullPath, supportedExtensions, ignoreDirectories, callback);
-            } else if (file.isFile() && supportedExtensions.includes(path.extname(file.name))) {
-                callback(fullPath);
-            }
-        }
-    } catch (error) {
-        warn(`Error scanning directory ${dir}:`, errMsg(error));
-    }
 }
 
 /**
@@ -165,6 +118,45 @@ function settingsHaveErrors() {
     return settings.hasErrorFindings(getSettingsFindings());
 }
 
+// The editor's project index, built from the resolved settings. Refreshed by every alias
+// regeneration (the debounced file/settings/.luaurc/Rojo watchers) and by one-shot commands
+// that need a fresh walk; invalidated by extension.js when a rewire setting changes.
+/** @type {import('../features/pathResolver').ResolverContext | null} */
+let _ctx = null;
+
+function invalidateContext() {
+    _ctx = null;
+}
+
+/** @returns {import('../features/pathResolver').ResolverContext | null} */
+function refreshContext() {
+    const workspaceRoot = getWorkspaceRoot();
+    if (!workspaceRoot) {
+        _ctx = null;
+        return null;
+    }
+    _ctx = pathResolver.createContext(workspaceRoot, settings.resolverOptions(getSettings()));
+    debug(`project index refreshed — ${_ctx.sourceFiles.length} source file(s), ${_ctx.targetSet.size} module(s), ${Object.keys(_ctx.aliases).length} alias root(s), rojo entries: ${_ctx.rojoMap ? _ctx.rojoMap.length : 'none'}`);
+    return _ctx;
+}
+
+/** @returns {import('../features/pathResolver').ResolverContext | null} The cached index, built on first use */
+function getContext() {
+    return _ctx || refreshContext();
+}
+
+// Unsaved editor text wins over disk wherever source is read, so diagnostics and edit
+// ranges match what the user sees.
+/** @returns {Map<string, string>} Absolute path -> live buffer text */
+function openDocumentTexts() {
+    /** @type {Map<string, string>} */
+    const texts = new Map();
+    vscode?.workspace.textDocuments.forEach(doc => {
+        if (doc.uri.scheme === 'file') texts.set(doc.uri.fsPath, doc.getText());
+    });
+    return texts;
+}
+
 /**
  * The validated values the Project settings file itself supplies (empty when absent). Hook
  * commands from here are workspace-supplied and go through the same approval gate as
@@ -180,7 +172,6 @@ function getProjectFileValues() {
  * @returns {{
  *   directoriesToScan: string[],
  *   ignoreDirectories: string[],
- *   supportedExtensions: string[],
  *   importModulePaths: string[],
  *   tryToAddImportRequire: boolean,
  *   preferredImportPlacement: 'TopOfFile'|'BeforeFirstRequire'|'AfterDefiningRobloxServices',
@@ -199,7 +190,6 @@ function getCommonConfig() {
     return {
         directoriesToScan: s['directoriesToScan'] || [],
         ignoreDirectories: s['ignoreDirectories'] || [],
-        supportedExtensions: ['.lua', '.luau'],
         importModulePaths: s['importModulePaths'] || [],
         tryToAddImportRequire: s['tryToAddImportRequire'],
         preferredImportPlacement: s['preferredImportPlacement'],
@@ -252,14 +242,16 @@ module.exports = {
     hasWorkspaceFolders,
     getWorkspaceRoot,
     requireWorkspaceRoot,
-    shouldIgnoreDirectory,
-    scanDirectory,
     getExtensionConfig,
     getSettings,
     getSettingsFindings,
     settingsHaveErrors,
     getProjectFileValues,
     invalidateSettings,
+    getContext,
+    refreshContext,
+    invalidateContext,
+    openDocumentTexts,
     getCommonConfig,
     getMode,
     getExplicitPathStyle,

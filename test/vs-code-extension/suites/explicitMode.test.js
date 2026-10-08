@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 
 const pathResolver = require('../../../src/features/pathResolver');
+const workspaceUtils = require('../../../src/utils/workspaceUtils');
 const { computeReplacement } = require('../../../src/features/explicitMode');
 
 const { mockWorkspaceConfig, createTestFiles } = require('../utils/testUtils');
@@ -68,11 +69,11 @@ suite('Explicit Mode Tests', () => {
             rojoProjectPath: 'default.project.json'
         });
 
-        ctx = pathResolver.refreshContext();
+        ctx = workspaceUtils.refreshContext();
     });
 
     suiteTeardown(() => {
-        pathResolver.invalidateContext();
+        workspaceUtils.invalidateContext();
         if (restoreConfig) restoreConfig();
         if (fs.existsSync(testWorkspacePath)) {
             fs.rmSync(testWorkspacePath, { recursive: true, force: true });

@@ -1,14 +1,9 @@
+// Path resolution and rendering over the project index. No editor dependency: the extension
+// caches a context (workspaceUtils.getContext) and the CLI and build create their own.
 const fs = require('fs');
 const path = require('path');
-// Optional — see updateLuaFileAliases.js. Resolution and rendering are pure; only
-// refreshContext and the open-buffer preference in readSourceTexts touch the editor.
-/** @type {typeof import('vscode') | null} */
-let vscode = null;
-try { vscode = require('vscode'); } catch (e) { /* running outside VS Code */ }
 const { debug, warn, errMsg } = require('../core/logger');
-const { buildBasenameMap, compileIgnorePatterns, findIgnoreMatch } = require('./updateLuaFileAliases');
-const { resolverOptions } = require('../core/settings');
-const { getSettings } = require('../utils/workspaceUtils');
+const { buildBasenameMap, readLuaurc, normalizeAliases } = require('../core/projectIndex');
 
 /**
  * One mapped node: a `$path` of a Rojo project tree, or a sourcemap node with a Luau file.
@@ -18,21 +13,18 @@ const { getSettings } = require('../utils/workspaceUtils');
  */
 
 /**
- * Everything path resolution needs. Built by createContext(), cached by refreshContext(),
- * and consumed here plus by aliasDiagnostics and the CI checker.
+ * The project index: everything path resolution needs, from one walk of the scan roots.
+ * Built by createContext(); the extension caches one (workspaceUtils.getContext).
  * @typedef {object} ResolverContext
  * @property {string} workspaceRoot - Absolute path of the workspace root
  * @property {Record<string, string>} aliases - Bare alias name -> workspace-root-relative path
+ * @property {string | null} luaurcError - Why .luaurc could not be parsed (aliases is then empty), or null
  * @property {RojoEntry[] | null} rojoMap - null when neither a sourcemap nor a Rojo project could be read/parsed
+ * @property {import('../core/projectIndex').BasenameMap} basenameMap - The raw scan, for alias classification
  * @property {Record<string, string[]>} targets - Basename -> candidate root-relative file paths
  * @property {Set<string>} targetSet - Every indexed root-relative target path
+ * @property {string[]} sourceFiles - Absolute path of every Luau file under the scan roots, aliased or not
  * @property {string[]} pathPriority - Normalized path prefixes, highest priority first
- */
-
-/**
- * The slice of vscode.WorkspaceConfiguration these helpers use, so the CI checker can pass a
- * plain object instead.
- * @typedef {{get: (section: string, defaultValue?: any) => any}} ConfigLike
  */
 
 /**
@@ -43,8 +35,6 @@ const { getSettings } = require('../utils/workspaceUtils');
  * @property {number} startColumn
  * @property {number} endColumn
  */
-
-const supportedExtensions = ['.lua', '.luau'];
 
 // Matches every require string form explicit mode can produce or consume: @-prefixed
 // (alias, @self, @game) AND ./ ../ relative paths. This is a superset of aliasDiagnostics'
@@ -140,46 +130,22 @@ function resolveDots(baseDirRel, spec) {
 }
 
 // ---------------------------------------------------------------------------
-// Context: everything path resolution needs, cached between the debounced refreshes that
-// already fire on file/settings/.luaurc/Rojo-project changes.
+// Context: everything path resolution needs.
 // ---------------------------------------------------------------------------
 
-/** @type {ResolverContext | null} */
-let _ctx = null;
-
-function invalidateContext() {
-    _ctx = null;
-}
-
-function getContext() {
-    return _ctx;
-}
-
-// Alias keys are accepted bare ("Shared") and @-prefixed ("@Shared"), same as
-// aliasDiagnostics.readAliasNames. Values are workspace-root-relative paths.
+// A parse failure is kept, not just swallowed: "no aliases" and "aliases unknowable" must not
+// look alike, or dynamic-mode diagnostics flag every alias require in the workspace.
 /**
  * @param {string} workspaceRoot
- * @returns {Record<string, string>}
+ * @returns {{aliases: Record<string, string>, luaurcError: string | null}}
  */
 function readAliasMap(workspaceRoot) {
-    const luaurcPath = path.join(workspaceRoot, '.luaurc');
-    if (!fs.existsSync(luaurcPath)) return {};
-    let parsed;
     try {
-        const raw = fs.readFileSync(luaurcPath, 'utf8');
-        parsed = raw ? JSON.parse(raw) : {};
+        return { aliases: normalizeAliases(readLuaurc(workspaceRoot)?.aliases), luaurcError: null };
     } catch (e) {
         debug(`pathResolver: .luaurc could not be parsed (${errMsg(e)}); no alias roots available.`);
-        return {};
+        return { aliases: {}, luaurcError: errMsg(e) };
     }
-    /** @type {Record<string, string>} */
-    const aliases = {};
-    for (const [key, value] of Object.entries(parsed && parsed.aliases ? parsed.aliases : {})) {
-        if (typeof value !== 'string') continue;
-        const name = key.replace(/^@/, '');
-        aliases[name] = normalizeSlashes(value).replace(/\/$/, '');
-    }
-    return aliases;
 }
 
 // Walks a Rojo project tree collecting { fsPath, dmPath } at every string-valued $path.
@@ -280,12 +246,10 @@ function parseSourcemap(workspaceRoot, sourcemapPath) {
     return map;
 }
 
-// Builds a resolution context from a workspace root and plain setting values. Reuses
-// buildBasenameMap so the module index has exactly the same semantics as dynamic mode's alias
-// scan (folder-init collapse, .server/.client skip, ignoreDirectories pruning).
-//
-// Separate from refreshContext so the CI checker, which has no VS Code to read settings from,
-// resolves requires exactly as the editor does.
+// Builds a resolution context from a workspace root and plain setting values, so the editor,
+// the CI checker, and the build resolve requires identically. Reuses buildBasenameMap so the
+// module index has exactly the same semantics as dynamic mode's alias scan (folder-init
+// collapse, .server/.client skip, ignoreDirectories pruning).
 /**
  * @param {string} workspaceRoot
  * @param {{directoriesToScan?: string[], ignoreDirectories?: string[], pathPriority?: string[], sourcemapPath?: string, rojoProjectPath?: string}} [options]
@@ -298,7 +262,7 @@ function createContext(workspaceRoot, {
     sourcemapPath = 'sourcemap.json',
     rojoProjectPath = 'default.project.json'
 } = {}) {
-    const { basenameMap } = buildBasenameMap(workspaceRoot, { directoriesToScan, ignoreDirectories });
+    const { basenameMap, sourceFiles } = buildBasenameMap(workspaceRoot, { directoriesToScan, ignoreDirectories });
     /** @type {Record<string, string[]>} */
     const targets = {};
     /** @type {Set<string>} */
@@ -310,75 +274,17 @@ function createContext(workspaceRoot, {
 
     return {
         workspaceRoot,
-        aliases: readAliasMap(workspaceRoot),
+        ...readAliasMap(workspaceRoot),
         // Rojo's own sourcemap wins when present; the hand-parsed project file is the fallback.
         rojoMap: parseSourcemap(workspaceRoot, sourcemapPath) ?? parseRojoProject(workspaceRoot, rojoProjectPath),
+        basenameMap,
         targets,
         targetSet,
+        sourceFiles,
         pathPriority: (Array.isArray(pathPriority) ? pathPriority : [])
             .filter(entry => typeof entry === 'string' && entry.length > 0)
             .map(entry => normalizeSlashes(entry))
     };
-}
-
-// Rebuilds the cached context from the current workspace and settings.
-/** @returns {ResolverContext | null} */
-function refreshContext() {
-    if (!vscode || !vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
-        _ctx = null;
-        return null;
-    }
-    const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
-    // Settings come from the resolved chain (Project settings file > editor config > defaults),
-    // so the editor's index is built from exactly the values the CLI and the action would use.
-    _ctx = createContext(workspaceRoot, resolverOptions(getSettings()));
-    debug(`pathResolver: context refreshed — ${_ctx.targetSet.size} module(s), ${Object.keys(_ctx.aliases).length} alias root(s), rojo entries: ${_ctx.rojoMap ? _ctx.rojoMap.length : 'none'}`);
-    return _ctx;
-}
-
-// Collects every .lua/.luau file under the configured scan roots, pruning the same
-// directories alias generation prunes. (Moved here from aliasDiagnostics so explicit-mode
-// features and diagnostics share one copy.)
-/**
- * @param {string} workspaceRoot
- * @param {string[]} directoriesToScan
- * @param {ReturnType<typeof compileIgnorePatterns>} ignorePatterns
- * @returns {string[]} Absolute file paths
- */
-function collectSourceFiles(workspaceRoot, directoriesToScan, ignorePatterns) {
-    /** @type {string[]} */
-    const files = [];
-
-    /** @param {string} dir */
-    function walk(dir) {
-        let entries;
-        try {
-            entries = fs.readdirSync(dir, { withFileTypes: true });
-        } catch (e) {
-            debug(`pathResolver: could not read "${dir}" (${errMsg(e)})`);
-            return;
-        }
-
-        for (const entry of entries) {
-            const fullPath = path.join(dir, entry.name);
-            if (entry.isDirectory()) {
-                const relPath = path.relative(workspaceRoot, fullPath).replace(/\\/g, '/');
-                if (findIgnoreMatch(ignorePatterns, entry.name, relPath)) continue;
-                walk(fullPath);
-            } else if (entry.isFile() && supportedExtensions.includes(path.extname(entry.name))) {
-                files.push(fullPath);
-            }
-        }
-    }
-
-    for (const dir of directoriesToScan) {
-        const absolute = path.join(workspaceRoot, dir);
-        if (fs.existsSync(absolute) && fs.statSync(absolute).isDirectory()) {
-            walk(absolute);
-        }
-    }
-
-    return files;
 }
 
 // ---------------------------------------------------------------------------
@@ -476,7 +382,7 @@ function resolveModulePath(spec, fromFileRel, ctx) {
  * Resolves one require string to a target file (resolveModulePath + existence probe).
  * @param {string} spec - The require string content, e.g. "@Shared/Stuff/myModule" or "./Sibling"
  * @param {string} fromFileRel - Workspace-relative path of the file containing the require
- * @param {ResolverContext} ctx - Context from refreshContext()
+ * @param {ResolverContext} ctx - Context from createContext()
  * @returns {{status: 'resolved', target: string}
  *         | {status: 'unverifiable'}
  *         | {status: 'unresolved', reason: string, message: string}}
@@ -491,30 +397,17 @@ function resolveRequire(spec, fromFileRel, ctx) {
         : { status: 'unresolved', reason: 'file-not-found', message: `no module found at "${resolution.modulePath}"` };
 }
 
-// Reads each source file under the scan roots, preferring open-editor text so unsaved
+// Reads every source file in the index, preferring the given open-editor texts so unsaved
 // edits are reflected (and so edit ranges are valid against the live buffer).
-// Returns a Map of absolute file path -> text.
 /**
- * @param {string} workspaceRoot
- * @param {ConfigLike} config
- * @returns {Map<string, string>}
+ * @param {ResolverContext} ctx
+ * @param {Map<string, string>} [openTexts] - Absolute path -> live buffer text (editor only)
+ * @returns {Map<string, string>} Absolute file path -> text
  */
-function readSourceTexts(workspaceRoot, config) {
-    const directoriesToScan = config.get('directoriesToScan') || [];
-    const ignorePatterns = compileIgnorePatterns(config.get('ignoreDirectories') || []);
-
-    // No editor means no unsaved buffers to prefer; everything comes from disk below.
-    /** @type {Map<string, string>} */
-    const openTexts = new Map();
-    if (vscode) {
-        vscode.workspace.textDocuments.forEach(doc => {
-            if (doc.uri.scheme === 'file') openTexts.set(doc.uri.fsPath, doc.getText());
-        });
-    }
-
+function readSourceTexts(ctx, openTexts = new Map()) {
     /** @type {Map<string, string>} */
     const texts = new Map();
-    for (const filePath of collectSourceFiles(workspaceRoot, directoriesToScan, ignorePatterns)) {
+    for (const filePath of ctx.sourceFiles) {
         let text = openTexts.get(filePath);
         if (text === undefined) {
             try {
@@ -699,11 +592,7 @@ function findRequireStrings(text) {
 module.exports = {
     REQUIRE_STRING,
     RESERVED_ALIASES,
-    refreshContext,
     createContext,
-    getContext,
-    invalidateContext,
-    collectSourceFiles,
     readSourceTexts,
     resolveModulePath,
     resolveRequire,

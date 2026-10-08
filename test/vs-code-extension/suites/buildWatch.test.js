@@ -9,7 +9,7 @@ const path = require('path');
 const fs = require('fs');
 
 const buildWatch = require('../../../src/features/buildWatch');
-const pathResolver = require('../../../src/features/pathResolver');
+const workspaceUtils = require('../../../src/utils/workspaceUtils');
 
 const { mockWorkspaceConfig, createTestFiles } = require('../utils/testUtils');
 
@@ -70,7 +70,7 @@ suite('Build Watch Tests', () => {
             return [diagnostic];
         });
 
-        pathResolver.refreshContext();
+        workspaceUtils.refreshContext();
     });
 
     suiteTeardown(() => {
@@ -86,7 +86,7 @@ suite('Build Watch Tests', () => {
         // Reset the source to a known-good state for each case.
         fs.writeFileSync(path.join(testWorkspacePath, CONSUMER),
             'local Target = require("@Target")\nreturn Target', 'utf8');
-        pathResolver.refreshContext();
+        workspaceUtils.refreshContext();
     });
 
     /** @param {string} rel */
@@ -175,7 +175,7 @@ suite('Build Watch Tests', () => {
     test('Deleting the source leaves no orphaned hold', () => {
         const scratch = 'src/Server/Temp.luau';
         createTestFiles(testWorkspacePath, { [scratch]: 'return {}' });
-        pathResolver.refreshContext();
+        workspaceUtils.refreshContext();
         buildWatch.attemptWrite(scratch);
         assert.ok(outputText('dist/' + scratch), 'expected the scratch file to convert');
 

@@ -7,8 +7,8 @@ let vscode = null;
 try { vscode = require('vscode'); } catch (e) { /* running outside VS Code */ }
 const { debug, warn, errMsg } = require('../core/logger');
 
-const { getMode, getExplicitPathStyle, runtimeModuleRequired, getBuildConversionConfig, getSettings, getSettingsFindings, settingsHaveErrors } = require('../utils/workspaceUtils');
-const { PROJECT_SETTINGS_FILE, asConfigLike } = require('../core/settings');
+const { getMode, getExplicitPathStyle, runtimeModuleRequired, getBuildConversionConfig, getSettings, getSettingsFindings, settingsHaveErrors, getContext, openDocumentTexts } = require('../utils/workspaceUtils');
+const { PROJECT_SETTINGS_FILE } = require('../core/settings');
 const pathResolver = require('./pathResolver');
 const { getImportRequireLineIndexes } = require('./addImportToFiles');
 
@@ -79,30 +79,6 @@ function disposeAliasDiagnostics() {
     if (!_collection) return;
     _collection.dispose();
     _collection = null;
-}
-
-// Alias keys are accepted both bare ("Shared") and @-prefixed ("@Shared"), because Luau
-// accepts both in .luaurc and this extension's own defaults have used each form.
-/**
- * @param {string} workspaceRoot
- * @returns {Set<string> | null} Alias names without the '@', or null when .luaurc is absent/unparseable
- */
-function readAliasNames(workspaceRoot) {
-    const luaurcPath = path.join(workspaceRoot, '.luaurc');
-    if (!fs.existsSync(luaurcPath)) return null;
-
-    let parsed;
-    try {
-        const raw = fs.readFileSync(luaurcPath, 'utf8');
-        parsed = raw ? JSON.parse(raw) : {};
-    } catch (e) {
-        // generateFileAliases already surfaces a parse failure to the user; stay quiet here.
-        debug(`aliasDiagnostics: skipping, .luaurc could not be parsed (${errMsg(e)})`);
-        return null;
-    }
-
-    const aliases = parsed && parsed.aliases ? parsed.aliases : {};
-    return new Set(Object.keys(aliases).map(key => key.replace(/^@/, '')));
 }
 
 // Finds every unresolvable alias require in one file's text.
@@ -185,24 +161,26 @@ function buildDiagnostic(unresolved) {
     return diagnostic;
 }
 
-// Dynamic mode: re-reads .luaurc and reports requires whose alias root is missing.
+// Dynamic mode: reports requires whose alias root is not in the index's alias set, which
+// alias generation keeps equal to what it last wrote to .luaurc.
 /**
- * @param {string} workspaceRoot
- * @param {import('./pathResolver').ConfigLike} config
+ * @param {Map<string, string>} texts - From pathResolver.readSourceTexts
+ * @param {ResolverContext} ctx
  * @param {import('vscode').DiagnosticCollection} collection
  * @returns {RefreshCounts | undefined}
  */
-function refreshDynamicDiagnostics(workspaceRoot, config, collection) {
+function refreshDynamicDiagnostics(texts, ctx, collection) {
     if (!vscode) return;
-    const aliasNames = readAliasNames(workspaceRoot);
-    if (!aliasNames) return;
+    // generateFileAliases already surfaces a parse failure to the user; stay quiet here.
+    if (ctx.luaurcError) return;
+    const aliasNames = new Set(Object.keys(ctx.aliases));
 
     collection.clear();
 
     let totalUnresolved = 0;
     let filesWithIssues = 0;
 
-    for (const [filePath, text] of pathResolver.readSourceTexts(workspaceRoot, config)) {
+    for (const [filePath, text] of texts) {
         const unresolved = findUnresolvedAliases(text, aliasNames);
         if (unresolved.length === 0) continue;
 
@@ -261,23 +239,21 @@ function findUnresolvedRequires(text, fromFileRel, ctx) {
 
 // Explicit mode: full-resolution validation of every require string in the workspace.
 /**
- * @param {string} workspaceRoot
- * @param {import('./pathResolver').ConfigLike} config
+ * @param {Map<string, string>} texts - From pathResolver.readSourceTexts
+ * @param {ResolverContext} ctx
  * @param {import('vscode').DiagnosticCollection} collection
  * @returns {RefreshCounts | undefined}
  */
-function refreshExplicitDiagnostics(workspaceRoot, config, collection) {
+function refreshExplicitDiagnostics(texts, ctx, collection) {
     if (!vscode) return;
-    const ctx = pathResolver.getContext() || pathResolver.refreshContext();
-    if (!ctx) return;
 
     collection.clear();
 
     let totalUnresolved = 0;
     let filesWithIssues = 0;
 
-    for (const [filePath, text] of pathResolver.readSourceTexts(workspaceRoot, config)) {
-        const fromRel = path.relative(workspaceRoot, filePath).replace(/\\/g, '/');
+    for (const [filePath, text] of texts) {
+        const fromRel = path.relative(ctx.workspaceRoot, filePath).replace(/\\/g, '/');
         const unresolved = findUnresolvedRequires(text, fromRel, ctx);
         if (unresolved.length === 0) continue;
 
@@ -334,16 +310,15 @@ function findStaleImportLines(text, importModulePaths) {
 // Appends stale-boilerplate warnings on top of whatever the mode-specific refresh already
 // reported for each file.
 /**
- * @param {string} workspaceRoot
- * @param {import('./pathResolver').ConfigLike} config
+ * @param {Map<string, string>} texts - From pathResolver.readSourceTexts
  * @param {import('vscode').DiagnosticCollection} collection
  */
-function refreshStaleBoilerplateDiagnostics(workspaceRoot, config, collection) {
+function refreshStaleBoilerplateDiagnostics(texts, collection) {
     if (!vscode) return;
     if (!getBuildConversionConfig().enabled) return;
     const importModulePaths = getSettings()['importModulePaths'] || [];
 
-    for (const [filePath, text] of pathResolver.readSourceTexts(workspaceRoot, config)) {
+    for (const [filePath, text] of texts) {
         const stale = findStaleImportLines(text, importModulePaths);
         if (stale.length === 0) continue;
         const uri = vscode.Uri.file(filePath);
@@ -495,8 +470,8 @@ function refreshSettingsDiagnostics(workspaceRoot, collection) {
 }
 
 // Re-reports unresolved requires across the workspace, branching on mode: dynamic checks
-// alias roots against .luaurc, explicit fully resolves every require string. Also flags
-// workspace settings the current mode ignores.
+// alias roots against the generated alias set, explicit fully resolves every require string.
+// Also flags workspace settings the current mode ignores.
 //
 // ponytail: re-reads every source file on each call, which is fine at Roblox project scale
 // (hundreds of files) and rides the existing 500ms alias debounce. If this shows up in a
@@ -505,8 +480,6 @@ function refreshAliasDiagnostics() {
     if (!vscode || !vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) return;
 
     const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
-    // The resolved chain, so source scanning honors the Project settings file.
-    const config = asConfigLike(getSettings());
     const collection = getCollection();
 
     refreshSettingsFindingDiagnostics(workspaceRoot, collection);
@@ -515,11 +488,16 @@ function refreshAliasDiagnostics() {
     // the report until the settings file is fixed.
     if (settingsHaveErrors()) return;
 
-    const result = getMode() === 'explicit'
-        ? refreshExplicitDiagnostics(workspaceRoot, config, collection)
-        : refreshDynamicDiagnostics(workspaceRoot, config, collection);
+    const ctx = getContext();
+    if (!ctx) return;
+    // Read once for every check below.
+    const texts = pathResolver.readSourceTexts(ctx, openDocumentTexts());
 
-    refreshStaleBoilerplateDiagnostics(workspaceRoot, config, collection);
+    const result = getMode() === 'explicit'
+        ? refreshExplicitDiagnostics(texts, ctx, collection)
+        : refreshDynamicDiagnostics(texts, ctx, collection);
+
+    refreshStaleBoilerplateDiagnostics(texts, collection);
     refreshSettingsDiagnostics(workspaceRoot, collection);
 
     if (!result) return result;

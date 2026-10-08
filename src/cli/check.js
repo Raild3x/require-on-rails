@@ -16,7 +16,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const { buildBasenameMap, classifyBasenames } = require('../features/updateLuaFileAliases');
+const { classifyBasenames, readLuaurc, normalizeAliases } = require('../core/projectIndex');
 const pathResolver = require('../features/pathResolver');
 const { findUnresolvedAliases, findUnresolvedRequires, unresolvedAliasMessage, findStaleImportLines } = require('../features/aliasDiagnostics');
 const { runBuild } = require('../features/buildProject');
@@ -89,8 +89,6 @@ function loadConfig(workingDir) {
     return { config: resolved.settings, findings, fatal: settings.hasErrorFindings(resolved.findings) };
 }
 
-const asConfigObject = settings.asConfigLike;
-
 // ---------------------------------------------------------------------------
 // Checks
 // ---------------------------------------------------------------------------
@@ -98,21 +96,6 @@ const asConfigObject = settings.asConfigLike;
 /** @param {string} p */
 function toPosix(p) {
     return p.replace(/\\/g, '/');
-}
-
-// Alias values are compared, not just their names, so a moved file is caught as drift.
-/**
- * @param {Object<string, unknown> | null | undefined} aliases
- * @returns {Record<string, string>}
- */
-function normalizeAliasMap(aliases) {
-    /** @type {Record<string, string>} */
-    const out = {};
-    for (const [key, value] of Object.entries(aliases || {})) {
-        if (typeof value !== 'string') continue;
-        out[key.replace(/^@/, '')] = toPosix(value).replace(/^\.\//, '').replace(/\/$/, '');
-    }
-    return out;
 }
 
 // Every finding is anchored to a file and position so it can be rendered as an annotation on
@@ -149,17 +132,17 @@ function checkAmbiguous(ambiguousAliases) {
 // Dynamic mode: an alias require is valid when its root is in the generated alias set.
 /**
  * @param {string} workingDir
- * @param {CheckerConfig} config
+ * @param {Map<string, string>} texts - From pathResolver.readSourceTexts
  * @param {Object<string, string>} aliases
  * @param {Object<string, string[]>} ambiguousAliases
  * @returns {Finding[]}
  */
-function checkDynamicRequires(workingDir, config, aliases, ambiguousAliases) {
+function checkDynamicRequires(workingDir, texts, aliases, ambiguousAliases) {
     const aliasNames = new Set(Object.keys(aliases).map(key => key.replace(/^@/, '')));
     /** @type {Finding[]} */
     const findings = [];
 
-    for (const [filePath, text] of pathResolver.readSourceTexts(workingDir, asConfigObject(config))) {
+    for (const [filePath, text] of texts) {
         const relative = path.relative(workingDir, filePath);
         for (const unresolved of findUnresolvedAliases(text, aliasNames)) {
             const { message, code } = unresolvedAliasMessage(unresolved, ambiguousAliases);
@@ -177,19 +160,17 @@ function checkDynamicRequires(workingDir, config, aliases, ambiguousAliases) {
  * @returns {Finding[]}
  */
 function checkLuaurcDrift(workingDir, aliases) {
-    const luaurcPath = path.join(workingDir, '.luaurc');
-    if (!fs.existsSync(luaurcPath)) return [];
-
     let parsed;
     try {
-        const raw = fs.readFileSync(luaurcPath, 'utf8');
-        parsed = raw.trim() ? parseJsonc(raw) : {};
+        parsed = readLuaurc(workingDir);
     } catch (e) {
         throw new ConfigError(`could not parse ${toPosix(path.join(workingDir, '.luaurc'))}: ${e instanceof Error ? e.message : String(e)}`);
     }
+    if (!parsed) return [];
 
-    const committed = normalizeAliasMap(parsed.aliases);
-    const generated = normalizeAliasMap(aliases);
+    // Alias values are compared, not just their names, so a moved file is caught as drift.
+    const committed = normalizeAliases(parsed.aliases);
+    const generated = normalizeAliases(aliases);
 
     const missing = Object.keys(generated).filter(name => committed[name] === undefined).sort();
     const extra = Object.keys(committed).filter(name => generated[name] === undefined).sort();
@@ -216,10 +197,12 @@ function checkLuaurcDrift(workingDir, aliases) {
 /**
  * @param {string} workingDir
  * @param {CheckerConfig} config
+ * @param {Map<string, string>} texts - From pathResolver.readSourceTexts
+ * @param {import('../features/pathResolver').ResolverContext} ctx
  * @param {boolean} verifyBuild
  * @returns {Finding[]}
  */
-function checkBuildConversion(workingDir, config, verifyBuild) {
+function checkBuildConversion(workingDir, config, texts, ctx, verifyBuild) {
     const raw = /** @type {Record<string, any>} */ (config);
     if (!raw['buildConversion.enabled']) return [];
 
@@ -227,7 +210,7 @@ function checkBuildConversion(workingDir, config, verifyBuild) {
     const findings = [];
     const importModulePaths = raw['importModulePaths'] || [];
 
-    for (const [filePath, text] of pathResolver.readSourceTexts(workingDir, asConfigObject(raw))) {
+    for (const [filePath, text] of texts) {
         const relative = toPosix(path.relative(workingDir, filePath));
         for (const stale of findStaleImportLines(text, importModulePaths)) {
             findings.push(makeFinding(relative, stale.line, stale.startColumn, stale.endColumn,
@@ -236,7 +219,7 @@ function checkBuildConversion(workingDir, config, verifyBuild) {
     }
 
     if (verifyBuild) {
-        const result = runBuild(workingDir, settings.buildOptions(raw, { dryRun: true }));
+        const result = runBuild(workingDir, settings.buildOptions(raw, { dryRun: true }), ctx);
         for (const finding of result.findings) {
             findings.push(makeFinding(finding.file, finding.line, finding.column, finding.endColumn,
                 finding.code, finding.message));
@@ -259,32 +242,34 @@ function runChecks(workingDir, { verifyBuild = false } = {}) {
     // an unusable settings file is the whole report.
     if (fatal) return settingsFindings;
 
+    // One walk of the scan roots and one read of each file serve every check below.
+    const ctx = pathResolver.createContext(workingDir, settings.resolverOptions(config));
+    const texts = pathResolver.readSourceTexts(ctx);
+
     // Explicit mode writes full paths into source and never generates aliases, so duplicate
     // basenames are legal and there is no .luaurc of ours to have drifted. Resolution is the
     // only thing to verify — and it verifies far more than dynamic mode can.
     if (config.mode === 'explicit') {
-        const ctx = pathResolver.createContext(workingDir, config);
         /** @type {Finding[]} */
         const findings = [];
-        for (const [filePath, text] of pathResolver.readSourceTexts(workingDir, asConfigObject(config))) {
+        for (const [filePath, text] of texts) {
             const fromRel = toPosix(path.relative(workingDir, filePath));
             for (const unresolved of findUnresolvedRequires(text, fromRel, ctx)) {
                 findings.push(makeFinding(fromRel, unresolved.line, unresolved.startColumn,
                     unresolved.endColumn, 'unresolved-require', unresolved.message));
             }
         }
-        return [...settingsFindings, ...findings, ...checkBuildConversion(workingDir, config, verifyBuild)];
+        return [...settingsFindings, ...findings, ...checkBuildConversion(workingDir, config, texts, ctx, verifyBuild)];
     }
 
-    const { basenameMap } = buildBasenameMap(workingDir, config);
-    const { aliases, ambiguousAliases } = classifyBasenames(basenameMap, config);
+    const { aliases, ambiguousAliases } = classifyBasenames(ctx.basenameMap, config);
 
     return [
         ...settingsFindings,
         ...checkAmbiguous(ambiguousAliases),
-        ...checkDynamicRequires(workingDir, config, aliases, ambiguousAliases),
+        ...checkDynamicRequires(workingDir, texts, aliases, ambiguousAliases),
         ...checkLuaurcDrift(workingDir, aliases),
-        ...checkBuildConversion(workingDir, config, verifyBuild)
+        ...checkBuildConversion(workingDir, config, texts, ctx, verifyBuild)
     ];
 }
 

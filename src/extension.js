@@ -31,10 +31,11 @@ const {
     getSettings,
     getSettingsFindings,
     settingsHaveErrors,
-    invalidateSettings
+    invalidateSettings,
+    refreshContext,
+    invalidateContext
 } = require('./utils/workspaceUtils');
 const settings = require('./core/settings');
-const pathResolver = require('./features/pathResolver');
 const explicitMode = require('./features/explicitMode');
 
 let isActive = false;
@@ -99,7 +100,7 @@ function enableWatchers() {
         const before = rewireSignature();
         invalidateSettings();
         if (rewireSignature() !== before) {
-            pathResolver.invalidateContext();
+            invalidateContext();
             if (isActive) {
                 debug(`${settings.PROJECT_SETTINGS_FILE} changed a rewire setting; rewiring extension features.`);
                 disableExtensionFeatures();
@@ -381,7 +382,7 @@ function regenerateAliasesAndDiagnostics() {
     if (isActive && getBuildConversionConfig().enabled) scheduleFullRebuild();
 
     if (getMode() === 'explicit') {
-        const ctx = pathResolver.refreshContext();
+        const ctx = refreshContext();
         if (!ctx) return;
         refreshAliasDiagnostics();
         return { aliases: {}, ambiguousAliases: {} };
@@ -479,7 +480,7 @@ function activate(context) {
             ? REWIRE_CONFIG_KEYS.find(key => event.affectsConfiguration(`require-on-rails.${key}`)) || 'mode'
             : undefined;
         if (changedRewireSetting) {
-            pathResolver.invalidateContext();
+            invalidateContext();
             if (isActive) {
                 debug(`Setting "require-on-rails.${changedRewireSetting}" changed; rewiring extension features.`);
                 disableExtensionFeatures();

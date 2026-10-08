@@ -119,7 +119,7 @@ suite('Alias Diagnostics Tests', () => {
         });
 
         test('Should accept @-prefixed keys from .luaurc as defined', () => {
-            // .luaurc keys are normalized by readAliasNames; this mirrors that both forms work.
+            // .luaurc keys are normalized by normalizeAliases; this mirrors that both forms work.
             const found = findUnresolvedAliases('require("@Server")', new Set(['Server']));
             assert.strictEqual(found.length, 0, 'Bare key should satisfy an @-prefixed require');
         });
