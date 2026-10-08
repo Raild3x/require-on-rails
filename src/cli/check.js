@@ -18,7 +18,7 @@ const path = require('path');
 
 const { classifyBasenames, readLuaurc, normalizeAliases } = require('../core/projectIndex');
 const pathResolver = require('../features/pathResolver');
-const { findUnresolvedAliases, findUnresolvedRequires, unresolvedAliasMessage, findStaleImportLines } = require('../features/aliasDiagnostics');
+const { findUnresolvedAliases, unresolvedAliasMessage, findStaleImportLines } = require('../features/aliasDiagnostics');
 const { runBuild } = require('../features/buildProject');
 const settings = require('../core/settings');
 
@@ -33,16 +33,7 @@ class ConfigError extends Error {}
  * @typedef {Record<string, any>} CheckerConfig
  */
 
-/**
- * One problem to report, positioned 0-based like the extension's finding objects.
- * @typedef {object} Finding
- * @property {string} file
- * @property {number} line
- * @property {number} column
- * @property {number} endColumn
- * @property {string} code
- * @property {string} message
- */
+/** @typedef {import('../core/plan').Finding} Finding */
 
 // ---------------------------------------------------------------------------
 // Inputs
@@ -254,7 +245,7 @@ function runChecks(workingDir, { verifyBuild = false } = {}) {
         const findings = [];
         for (const [filePath, text] of texts) {
             const fromRel = toPosix(path.relative(workingDir, filePath));
-            for (const unresolved of findUnresolvedRequires(text, fromRel, ctx)) {
+            for (const unresolved of pathResolver.findUnresolvedRequires(text, fromRel, ctx)) {
                 findings.push(makeFinding(fromRel, unresolved.line, unresolved.startColumn,
                     unresolved.endColumn, 'unresolved-require', unresolved.message));
             }

@@ -3,6 +3,7 @@
 /** @type {typeof import('vscode') | null} */
 let vscode = null;
 try { vscode = require('vscode'); } catch (e) { /* running outside VS Code */ }
+const path = require('path');
 const settings = require('../core/settings');
 const pathResolver = require('../features/pathResolver');
 const { debug } = require('../core/logger');
@@ -157,6 +158,26 @@ function openDocumentTexts() {
     return texts;
 }
 
+// The editor's way to apply a Plan: one WorkspaceEdit, so the change is a single undo step
+// and lands in open buffers rather than behind them on disk.
+/**
+ * @param {string} workspaceRoot
+ * @param {import('../core/plan').Edit[]} edits
+ * @returns {import('vscode').WorkspaceEdit}
+ */
+function toWorkspaceEdit(workspaceRoot, edits) {
+    if (!vscode) throw new Error('toWorkspaceEdit requires VS Code; headless callers use core/plan.writeEdits.');
+    const workspaceEdit = new vscode.WorkspaceEdit();
+    for (const edit of edits) {
+        workspaceEdit.replace(
+            vscode.Uri.file(path.join(workspaceRoot, edit.file)),
+            new vscode.Range(edit.line, edit.startColumn, edit.line, edit.endColumn),
+            edit.newText
+        );
+    }
+    return workspaceEdit;
+}
+
 /**
  * The validated values the Project settings file itself supplies (empty when absent). Hook
  * commands from here are workspace-supplied and go through the same approval gate as
@@ -252,6 +273,7 @@ module.exports = {
     refreshContext,
     invalidateContext,
     openDocumentTexts,
+    toWorkspaceEdit,
     getCommonConfig,
     getMode,
     getExplicitPathStyle,

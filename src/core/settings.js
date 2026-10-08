@@ -341,6 +341,18 @@ function resolverOptions(settings) {
     };
 }
 
+// How explicit mode renders a require string, for the planners and the editor alike.
+/**
+ * @param {SettingsMap} settings
+ * @returns {import('../features/requirePlanner').RenderOptions}
+ */
+function renderOptions(settings) {
+    return {
+        style: settings['explicitPathStyle'],
+        preferRelative: settings['preferRelativePaths']
+    };
+}
+
 // The resolver bundle plus everything runBuild needs. `overrides` carries the caller's
 // intent (dryRun for a Check, an output directory the command chose).
 /**
@@ -403,6 +415,7 @@ module.exports = {
     resolveSettings,
     hasErrorFindings,
     resolverOptions,
+    renderOptions,
     buildOptions,
     projectFileExists,
     writeProjectSetting

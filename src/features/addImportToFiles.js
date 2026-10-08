@@ -6,6 +6,7 @@ const path = require('path');
 let vscode = null;
 try { vscode = require('vscode'); } catch (e) { /* running outside VS Code */ }
 const { print, warn, errMsg } = require('../core/logger');
+const { applyEdits } = require('../core/plan');
 const {
     DEFAULT_CONTEXTUAL_IMPORT_TEMPLATE,
     getCommonConfig,
@@ -234,22 +235,45 @@ function hasValidImportRequire(content, importModulePaths) {
  */
 function fileNeedsImport(filePath, importModulePaths) {
     try {
-        const content = fs.readFileSync(filePath, 'utf8');
-        
-        // Check if file has any require statements with '@' symbol
-        const requireWithAtPattern = /require\s*\(\s*["']([^"']*@[^"']*)["']\s*\)/;
-        const hasCustomAliases = requireWithAtPattern.test(content);
-        
-        if (!hasCustomAliases) {
-            return false;
-        }
-        
-        // Use the centralized function to check for valid import require definitions
-        return !hasValidImportRequire(content, importModulePaths);
+        return textNeedsImport(fs.readFileSync(filePath, 'utf8'), importModulePaths);
     } catch (error) {
         warn(`Error reading file ${filePath}:`, errMsg(error));
         return false;
     }
+}
+
+/**
+ * A file needs the Import boilerplate when it requires something by an '@' string and does
+ * not already have the boilerplate.
+ * @param {string} text
+ * @param {string|string[]} importModulePaths - Configured import module path(s)
+ * @returns {boolean}
+ */
+function textNeedsImport(text, importModulePaths) {
+    return /require\s*\(\s*["']([^"']*@[^"']*)["']\s*\)/.test(text) && !hasValidImportRequire(text, importModulePaths);
+}
+
+// The selene suppression that conventionally rides along with the boilerplate. hideLines
+// dims the canonical spelling; stripImportLines also removes spacing variants of it, so that
+// orphaned copies go together with the block they annotated.
+const SELENE_ALLOW_COMMENT = '-- selene: allow(incorrect_standard_library_use)';
+const SELENE_ALLOW_RE = /^\s*--\s*selene:\s*allow\(incorrect_standard_library_use\)\s*$/;
+
+/**
+ * The lines hideLines dims: the Import boilerplate and the selene suppression that rides
+ * along with it.
+ * @param {string} text
+ * @param {string|string[]} importModulePaths
+ * @returns {number[]} 0-based line indexes, ascending
+ */
+function importLinesToDim(text, importModulePaths) {
+    const importLineIndexes = new Set(getImportRequireLineIndexes(text, importModulePaths));
+    /** @type {number[]} */
+    const lines = [];
+    text.split('\n').forEach((line, index) => {
+        if (line.trim() === SELENE_ALLOW_COMMENT || importLineIndexes.has(index)) lines.push(index);
+    });
+    return lines;
 }
 
 /**
@@ -330,17 +354,30 @@ function addImportToFiles(filesToProcess, defaultImportModulePath, workspaceRoot
  */
 function addImportToSingleFile(filePath, defaultImportModulePath, preferredImportPlacement, contextualImportTemplate) {
     const content = fs.readFileSync(filePath, 'utf8');
+    const edit = planAddImport(content, defaultImportModulePath, preferredImportPlacement, contextualImportTemplate);
+    fs.writeFileSync(filePath, applyEdits(content, [edit]), 'utf8');
+    return true;
+}
+
+/**
+ * Where and what to insert to give one file the Import boilerplate. The caller knows which
+ * file it is, and adds `file` when the edit joins a Plan.
+ * @param {string} content - The file's text
+ * @param {string} defaultImportModulePath
+ * @param {string} preferredImportPlacement - One of `TopOfFile`, `BeforeFirstRequire`, `AfterDefiningRobloxServices`
+ * @param {string|undefined} contextualImportTemplate
+ * @returns {Omit<import('../core/plan').Edit, 'file'>} An insertion (empty range)
+ */
+function planAddImport(content, defaultImportModulePath, preferredImportPlacement, contextualImportTemplate) {
     const lines = content.split('\n');
     const contextualImportLineIndexes = new Set(
         getImportRequireLineIndexes(content, [defaultImportModulePath])
     );
-    
+
     const importRequire = createContextualImportSnippetFromTemplate(defaultImportModulePath, contextualImportTemplate);
 
     let insertLine = 0;
 
-    print("Pref Import:", preferredImportPlacement)
-    
     // Determine insertion line based on preference
     switch (preferredImportPlacement) {
         case "TopOfFile":
@@ -396,22 +433,14 @@ function addImportToSingleFile(filePath, defaultImportModulePath, preferredImpor
             break;
     }
     
-    // Prepare the text to insert
-    let textToInsert = '';
-    textToInsert += importRequire + '\n';
-    
-    // Insert the text
-    lines.splice(insertLine, 0, ...textToInsert.split('\n').slice(0, -1)); // Remove last empty line
-    
-    const updatedContent = lines.join('\n');
-    fs.writeFileSync(filePath, updatedContent, 'utf8');
-    
-    return true;
+    // The snippet goes in as whole lines ahead of insertLine. Past the last line (a service
+    // definition ending a file with no trailing newline), it starts a new line instead.
+    if (insertLine < lines.length) {
+        return { line: insertLine, startColumn: 0, endColumn: 0, newText: importRequire + '\n' };
+    }
+    const last = lines.length - 1;
+    return { line: last, startColumn: lines[last].length, endColumn: lines[last].length, newText: '\n' + importRequire };
 }
-
-// The selene suppression that conventionally rides along with the boilerplate (hideLines
-// dims it too); orphaned copies are removed together with the block they annotated.
-const SELENE_ALLOW_RE = /^\s*--\s*selene:\s*allow\(incorrect_standard_library_use\)\s*$/;
 
 /**
  * Removes the Import boilerplate from one file's text: the matched template lines, any
@@ -506,6 +535,9 @@ function removeImportFromAllFiles() {
 module.exports = {
     addImportToAllFiles,
     addImportToSingleFile,
+    planAddImport,
+    textNeedsImport,
+    importLinesToDim,
     hasValidImportRequire,
     getImportRequireLineIndexes,
     createContextualImportSnippet,

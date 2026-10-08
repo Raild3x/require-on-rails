@@ -1,9 +1,11 @@
-const fs = require('fs');
 const path = require('path');
 const vscode = require('vscode');
 const { print, debug } = require('../core/logger');
 const pathResolver = require('./pathResolver');
-const { getSettings, getContext, refreshContext, openDocumentTexts } = require('../utils/workspaceUtils');
+const { getSettings, getContext, refreshContext, openDocumentTexts, toWorkspaceEdit } = require('../utils/workspaceUtils');
+const { renderOptions } = require('../core/settings');
+const planner = require('./requirePlanner');
+const { planRename, planRewriteAll } = planner;
 
 const LANGUAGES = ['luau', 'lua'];
 
@@ -38,6 +40,10 @@ function getCtx() {
     return getContext();
 }
 
+function currentRender() {
+    return renderOptions(getSettings());
+}
+
 /**
  * @param {string} targetRel
  * @param {string} fromRel
@@ -45,34 +51,18 @@ function getCtx() {
  * @returns {string}
  */
 function renderFor(targetRel, fromRel, ctx) {
-    const settings = getSettings();
-    return pathResolver.renderRequire(
-        targetRel,
-        fromRel,
-        settings['explicitPathStyle'],
-        settings['preferRelativePaths'],
-        ctx
-    );
+    return planner.renderFor(targetRel, fromRel, ctx, currentRender());
 }
 
-// The replacement for a bare "@name" short require, or null when the spec is not eligible:
-// already an alias root (or reserved), has path segments, or matches no known module.
 /**
+ * The planner's short-name rewrite, rendered in the current settings' style.
  * @param {string} spec
  * @param {string} fromRel
  * @param {ResolverContext} ctx
  * @returns {string | null}
  */
 function computeReplacement(spec, fromRel, ctx) {
-    if (!spec.startsWith('@') || spec.includes('/')) return null;
-    const name = spec.slice(1);
-    if (!name || pathResolver.RESERVED_ALIASES.has(name)) return null;
-    if (ctx.aliases[name] !== undefined) return null; // an existing alias wins over rewriting
-    const candidates = ctx.targets[name];
-    if (!candidates || candidates.length === 0) return null;
-    const best = pathResolver.rankByDistance(candidates, fromRel, ctx.pathPriority)[0];
-    const rendered = renderFor(best, fromRel, ctx);
-    return rendered === spec ? null : rendered;
+    return planner.computeReplacement(spec, fromRel, ctx, currentRender());
 }
 
 // ---------------------------------------------------------------------------
@@ -272,24 +262,9 @@ function onWillSave(event) {
 }
 
 // ---------------------------------------------------------------------------
-// Renames/moves. Inbound requires (elsewhere, pointing at the moved item) are collected and
-// PROMPTED — moving a file away and dropping a same-named replacement in its place must be
-// able to leave old requires untouched. Outbound requires (inside the moved item) broke
-// unconditionally by the move itself, so they are fixed automatically.
+// Renames/moves: the planner splits the broken requires; outbound ones (inside the moved
+// item) are fixed automatically, inbound ones (elsewhere, pointing at it) are PROMPTED.
 // ---------------------------------------------------------------------------
-
-// Maps a module path under a renamed prefix to its new location, or null if unaffected.
-/**
- * @param {string} modulePath
- * @param {string} oldPrefix
- * @param {string} newPrefix
- * @returns {string | null}
- */
-function remapModulePath(modulePath, oldPrefix, newPrefix) {
-    if (modulePath === oldPrefix) return newPrefix;
-    if (modulePath.startsWith(oldPrefix + '/')) return newPrefix + modulePath.slice(oldPrefix.length);
-    return null;
-}
 
 /** @param {import('vscode').FileRenameEvent['files']} files */
 async function handleRenameEventExplicit(files) {
@@ -297,112 +272,40 @@ async function handleRenameEventExplicit(files) {
     if (!workspaceRoot) return;
 
     // Renames already happened on disk, so a fresh context sees the new world; where a
-    // require *used* to point is recovered with resolveModulePath (no existence probing).
+    // require *used* to point is recovered by the planner without existence probing.
     const ctx = refreshContext();
     if (!ctx) return;
 
-    const renames = [];
-    for (const file of files) {
-        const newRel = toRel(workspaceRoot, file.newUri.fsPath);
-        const oldRel = toRel(workspaceRoot, file.oldUri.fsPath);
-        let isDirectory = false;
-        try {
-            isDirectory = fs.statSync(file.newUri.fsPath).isDirectory();
-        } catch (e) {
-            continue;
-        }
-        if (!isDirectory && !['.lua', '.luau'].includes(path.extname(newRel))) continue;
-        renames.push({
-            // Module-path prefixes: a directory is its own prefix, a file collapses per
-            // modulePathOf (extension stripped, init -> folder).
-            oldPrefix: isDirectory ? oldRel : pathResolver.modulePathOf(oldRel),
-            newPrefix: isDirectory ? newRel : pathResolver.modulePathOf(newRel),
-            oldRel,
-            newRel,
-            isDirectory
-        });
-    }
-    if (renames.length === 0) return;
+    const moves = files.map(file => ({
+        oldRel: toRel(workspaceRoot, file.oldUri.fsPath),
+        newRel: toRel(workspaceRoot, file.newUri.fsPath)
+    }));
+    const plan = planRename(ctx, () => pathResolver.readSourceTexts(ctx, openDocumentTexts()), moves, currentRender());
 
-    const texts = pathResolver.readSourceTexts(ctx, openDocumentTexts());
-
-    const inboundEdit = new vscode.WorkspaceEdit();
-    const outboundEdit = new vscode.WorkspaceEdit();
-    let inboundCount = 0;
-    const inboundFiles = new Set();
-    let outboundCount = 0;
-
-    for (const [filePath, text] of texts) {
-        const fileRel = toRel(workspaceRoot, filePath);
-        const containingRename = renames.find(r =>
-            r.isDirectory ? (fileRel === r.newRel || fileRel.startsWith(r.newRel + '/')) : fileRel === r.newRel
-        );
-        // A file inside a moved subtree wrote its relative requires against its OLD
-        // location; resolve them from there.
-        const resolveFromRel = containingRename
-            ? containingRename.oldRel + fileRel.slice(containingRename.newRel.length)
-            : fileRel;
-        const uri = vscode.Uri.file(filePath);
-
-        for (const found of pathResolver.findRequireStrings(text)) {
-            const resolution = pathResolver.resolveModulePath(found.spec, resolveFromRel, ctx);
-            if (resolution.status !== 'path') continue;
-
-            let modulePath = resolution.modulePath;
-            let touched = false;
-            for (const rename of renames) {
-                const remapped = remapModulePath(modulePath, rename.oldPrefix, rename.newPrefix);
-                if (remapped !== null) {
-                    modulePath = remapped;
-                    touched = true;
-                    break;
-                }
-            }
-            // Outbound relative requires break by the move alone, even when the target
-            // did not move — every resolvable spec in a moved file gets re-rendered.
-            if (!touched && !containingRename) continue;
-
-            const target = pathResolver.probeModulePath(modulePath, ctx);
-            if (!target) continue;
-            const newText = renderFor(target, fileRel, ctx);
-            if (newText === found.spec) continue;
-
-            const range = new vscode.Range(found.line, found.startColumn, found.line, found.endColumn);
-            if (containingRename) {
-                outboundEdit.replace(uri, range, newText);
-                outboundCount++;
-            } else {
-                inboundEdit.replace(uri, range, newText);
-                inboundCount++;
-                inboundFiles.add(fileRel);
-            }
-        }
+    if (plan.outbound.length > 0) {
+        await vscode.workspace.applyEdit(toWorkspaceEdit(workspaceRoot, plan.outbound));
+        print(`explicit mode: fixed ${plan.outbound.length} require(s) inside moved file(s)`);
     }
 
-    if (outboundCount > 0) {
-        await vscode.workspace.applyEdit(outboundEdit);
-        print(`explicit mode: fixed ${outboundCount} require(s) inside moved file(s)`);
-    }
-
-    if (inboundCount > 0) {
-        const oldNames = renames.map(r => r.oldRel).join(', ');
+    if (plan.inbound.length > 0) {
+        const inboundFiles = new Set(plan.inbound.map(e => e.file));
         // Modal on purpose. Non-modal notifications auto-purge after ~15s no matter what
         // buttons they carry (only Error severity stays), and an unanswered prompt here
         // silently leaves every inbound require pointing at the old path. This fires once
         // per rename batch, and only when other files actually reference what moved.
         const choice = await vscode.window.showInformationMessage(
-            `Update ${inboundCount} require(s) in ${inboundFiles.size} file(s) that point at ${oldNames}?`,
+            `Update ${plan.inbound.length} require(s) in ${inboundFiles.size} file(s) that point at ${plan.movedFrom.join(', ')}?`,
             {
                 modal: true,
                 detail: `RequireOnRails rewrites them to the new location.\n\n` +
-                    `Choose No if you are replacing "${renames[0].oldRel}" with a different file of the same name ` +
+                    `Choose No if you are replacing "${plan.movedFrom[0]}" with a different file of the same name ` +
                     `and want existing requires to keep resolving to that path.`
             },
             'Yes'
         );
         if (choice === 'Yes') {
-            await vscode.workspace.applyEdit(inboundEdit);
-            print(`explicit mode: updated ${inboundCount} inbound require(s)`);
+            await vscode.workspace.applyEdit(toWorkspaceEdit(workspaceRoot, plan.inbound));
+            print(`explicit mode: updated ${plan.inbound.length} inbound require(s)`);
         } else {
             print('explicit mode: inbound require update declined');
         }
@@ -410,8 +313,7 @@ async function handleRenameEventExplicit(files) {
 }
 
 // ---------------------------------------------------------------------------
-// Bulk rewrite: re-render every resolvable require to the current style. Serves both
-// dynamic->explicit migration and later style changes.
+// Bulk rewrite: re-render every resolvable require to the current style.
 // ---------------------------------------------------------------------------
 
 async function rewriteAllRequires() {
@@ -424,46 +326,20 @@ async function rewriteAllRequires() {
     const ctx = refreshContext();
     if (!ctx) return;
 
-    const workspaceEdit = new vscode.WorkspaceEdit();
-    let count = 0;
-    const filesTouched = new Set();
-    let unresolvable = 0;
+    const plan = planRewriteAll(ctx, pathResolver.readSourceTexts(ctx, openDocumentTexts()), currentRender());
+    if (plan.edits.length > 0) await vscode.workspace.applyEdit(toWorkspaceEdit(workspaceRoot, plan.edits));
 
-    for (const [filePath, text] of pathResolver.readSourceTexts(ctx, openDocumentTexts())) {
-        const fromRel = toRel(workspaceRoot, filePath);
-        const uri = vscode.Uri.file(filePath);
-
-        for (const found of pathResolver.findRequireStrings(text)) {
-            // Bare short names go through the same eligibility rules as auto-replace;
-            // everything else is resolved and re-rendered in the current style.
-            let newText = computeReplacement(found.spec, fromRel, ctx);
-            if (newText === null) {
-                const resolution = pathResolver.resolveRequire(found.spec, fromRel, ctx);
-                if (resolution.status === 'unresolved') unresolvable++;
-                if (resolution.status !== 'resolved') continue;
-                const rendered = renderFor(resolution.target, fromRel, ctx);
-                if (rendered === found.spec) continue;
-                newText = rendered;
-            }
-            workspaceEdit.replace(uri, new vscode.Range(found.line, found.startColumn, found.line, found.endColumn), newText);
-            count++;
-            filesTouched.add(fromRel);
-        }
-    }
-
-    if (count > 0) await vscode.workspace.applyEdit(workspaceEdit);
-
-    const summary = count === 0
+    const summary = plan.edits.length === 0
         ? 'RequireOnRails: all requires already match the current style.'
-        : `RequireOnRails: rewrote ${count} require(s) in ${filesTouched.size} file(s).`;
+        : `RequireOnRails: rewrote ${plan.edits.length} require(s) in ${new Set(plan.edits.map(e => e.file)).size} file(s).`;
 
     // Requires left behind need acting on, so this is announced as a warning with an
     // action button: VS Code auto-purges plain notifications after ~15s, but one with
     // buttons stays until the user answers it.
-    if (unresolvable > 0) {
+    if (plan.findings.length > 0) {
         const showProblems = 'Show Problems';
         vscode.window.showWarningMessage(
-            `${summary} ${unresolvable} require(s) could not be resolved and were left untouched.`,
+            `${summary} ${plan.findings.length} require(s) could not be resolved and were left untouched.`,
             showProblems,
             'Dismiss'
         ).then(choice => {

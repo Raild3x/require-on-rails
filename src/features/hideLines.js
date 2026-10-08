@@ -1,11 +1,9 @@
 const vscode = require('vscode');
-const path = require('path');
-const fs = require('fs');
 const { print } = require('../core/logger');
 const {
     addImportToSingleFile,
-    hasValidImportRequire,
-    getImportRequireLineIndexes
+    textNeedsImport,
+    importLinesToDim
 } = require('./addImportToFiles');
 const { getSettings } = require('../utils/workspaceUtils');
 
@@ -47,18 +45,8 @@ function hideLines(editor) {
     const defaultImportModulePath = pathsArray[0];
     const tryToAddImportRequire = settings['tryToAddImportRequire'];
 
-    // Use the centralized function to check for valid import require definitions
-    const hasValidImport = hasValidImportRequire(text, importModulePaths);
-
-    // Check if the file contains require statements with '@' symbol
-    const requireWithAtPattern = /require\s*\(\s*["']([^"']*@[^"']*)["']\s*\)/;
-    const hasRequireWithAtSymbol = requireWithAtPattern.test(text);
-    
-    // Only prompt to add import require definition if:
-    // 1. tryToAddImportRequire is enabled
-    // 2. There's no valid import require definition present
-    // 3. There's at least one require statement with '@' symbol
-    if (tryToAddImportRequire && !hasValidImport && hasRequireWithAtSymbol) {
+    // Only prompt to add import require definition when enabled and the file needs it
+    if (tryToAddImportRequire && textNeedsImport(text, importModulePaths)) {
         if (currentEditorDocument && currentEditorDocument == editor.document.fileName) {
             print(`No changes detected in ${editor.document.fileName}, skipping reprocessing.`);
             return; // If the document hasn't changed, no need to reprocess
@@ -100,17 +88,10 @@ function hideLines(editor) {
         opacity: importOpacity.toString(), // Makes the text nearly invisible
     });
 
-    const seleneComment = '-- selene: allow(incorrect_standard_library_use)';
-    const importLineIndexes = new Set(getImportRequireLineIndexes(text, importModulePaths));
-    /** @type {vscode.Range[]} */
-    const linesToHide = [];
-    text.split('\n').forEach((line, index) => {
-        if (line.trim() === seleneComment || importLineIndexes.has(index)) {
-            const range = new vscode.Range(index, 0, index, line.length);
-            linesToHide.push(range);
-        }
-    });
-    
+    const lines = text.split('\n');
+    const linesToHide = importLinesToDim(text, importModulePaths)
+        .map(index => new vscode.Range(index, 0, index, lines[index].length));
+
     editor.setDecorations(currentDecorationType, linesToHide);
 }
 

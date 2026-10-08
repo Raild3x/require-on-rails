@@ -28,16 +28,6 @@ const { getImportRequireLineIndexes } = require('./addImportToFiles');
  * @property {number} endColumn
  */
 
-/**
- * One require string explicit mode cannot resolve, with the message explaining why.
- * @typedef {object} UnresolvedRequire
- * @property {string} spec
- * @property {number} line
- * @property {number} startColumn
- * @property {number} endColumn
- * @property {string} message
- */
-
 /** @typedef {{totalUnresolved: number, filesWithIssues: number}} RefreshCounts */
 
 /** @typedef {Object<string, string[]>} AmbiguousAliases */
@@ -192,50 +182,6 @@ function refreshDynamicDiagnostics(texts, ctx, collection) {
     return { totalUnresolved, filesWithIssues };
 }
 
-// Finds every require string in one file that explicit mode cannot resolve to a real module
-// file (alias root lookup + path walk, ./ ../ resolution, @game via the Rojo mapping). A bare
-// "@name" matching a known module basename is skipped: auto-replace will rewrite it, so
-// flagging it would just flicker while the user types. 'unverifiable' resolutions stay silent.
-//
-// Pure, so the CI checker validates explicit-mode requires by the same rules and words.
-/**
- * @param {string} text
- * @param {string} fromFileRel
- * @param {ResolverContext} ctx
- * @returns {UnresolvedRequire[]}
- */
-function findUnresolvedRequires(text, fromFileRel, ctx) {
-    /** @type {UnresolvedRequire[]} */
-    const found = [];
-
-    for (const occurrence of pathResolver.findRequireStrings(text)) {
-        const spec = occurrence.spec;
-
-        // Bare short name that auto-replace will handle (or that names a real alias).
-        if (spec.startsWith('@') && !spec.includes('/')) {
-            const name = spec.slice(1);
-            if (pathResolver.RESERVED_ALIASES.has(name)) continue;
-            if (ctx.aliases[name] !== undefined) continue;
-            if (ctx.targets[name] && ctx.targets[name].length > 0) continue;
-            found.push({
-                ...occurrence,
-                message: `RequireOnRails: "${spec}" matches no known module or alias. ` +
-                    `Check the file exists under require-on-rails.directoriesToScan and is not excluded by ignoreDirectories.`
-            });
-            continue;
-        }
-
-        const resolution = pathResolver.resolveRequire(spec, fromFileRel, ctx);
-        if (resolution.status === 'unresolved') {
-            found.push({
-                ...occurrence,
-                message: `RequireOnRails: "${spec}" does not resolve — ${resolution.message}.`
-            });
-        }
-    }
-
-    return found;
-}
 
 // Explicit mode: full-resolution validation of every require string in the workspace.
 /**
@@ -254,7 +200,7 @@ function refreshExplicitDiagnostics(texts, ctx, collection) {
 
     for (const [filePath, text] of texts) {
         const fromRel = path.relative(ctx.workspaceRoot, filePath).replace(/\\/g, '/');
-        const unresolved = findUnresolvedRequires(text, fromRel, ctx);
+        const unresolved = pathResolver.findUnresolvedRequires(text, fromRel, ctx);
         if (unresolved.length === 0) continue;
 
         collection.set(vscode.Uri.file(filePath), unresolved.map(u => makeExplicitDiagnostic(u, u.message)));
@@ -266,7 +212,7 @@ function refreshExplicitDiagnostics(texts, ctx, collection) {
 }
 
 /**
- * @param {UnresolvedRequire} found
+ * @param {import('./pathResolver').UnresolvedRequire} found
  * @param {string} message
  * @returns {import('vscode').Diagnostic}
  */
@@ -516,7 +462,6 @@ module.exports = {
     disposeAliasDiagnostics,
     findUnresolvedAliases,
     // Pure detection/reporting, shared with the CI checker so both speak the same words.
-    findUnresolvedRequires,
     unresolvedAliasMessage,
     findStaleImportLines
 };

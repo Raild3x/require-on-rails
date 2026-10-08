@@ -28,6 +28,16 @@ const { buildBasenameMap, readLuaurc, normalizeAliases } = require('../core/proj
  */
 
 /**
+ * One require string explicit mode cannot resolve, with the message explaining why.
+ * @typedef {object} UnresolvedRequire
+ * @property {string} spec
+ * @property {number} line
+ * @property {number} startColumn
+ * @property {number} endColumn
+ * @property {string} message
+ */
+
+/**
  * One require string found in a document, with its position.
  * @typedef {object} RequireOccurrence
  * @property {string} spec
@@ -589,6 +599,51 @@ function findRequireStrings(text) {
     return found;
 }
 
+// Finds every require string in one file that explicit mode cannot resolve to a real module
+// file (alias root lookup + path walk, ./ ../ resolution, @game via the Rojo mapping). A bare
+// "@name" matching a known module basename is skipped: auto-replace will rewrite it, so
+// flagging it would just flicker while the user types. 'unverifiable' resolutions stay silent.
+//
+// Pure, so the CI checker validates explicit-mode requires by the same rules and words.
+/**
+ * @param {string} text
+ * @param {string} fromFileRel
+ * @param {ResolverContext} ctx
+ * @returns {UnresolvedRequire[]}
+ */
+function findUnresolvedRequires(text, fromFileRel, ctx) {
+    /** @type {UnresolvedRequire[]} */
+    const found = [];
+
+    for (const occurrence of findRequireStrings(text)) {
+        const spec = occurrence.spec;
+
+        // Bare short name that auto-replace will handle (or that names a real alias).
+        if (spec.startsWith('@') && !spec.includes('/')) {
+            const name = spec.slice(1);
+            if (RESERVED_ALIASES.has(name)) continue;
+            if (ctx.aliases[name] !== undefined) continue;
+            if (ctx.targets[name] && ctx.targets[name].length > 0) continue;
+            found.push({
+                ...occurrence,
+                message: `RequireOnRails: "${spec}" matches no known module or alias. ` +
+                    `Check the file exists under require-on-rails.directoriesToScan and is not excluded by ignoreDirectories.`
+            });
+            continue;
+        }
+
+        const resolution = resolveRequire(spec, fromFileRel, ctx);
+        if (resolution.status === 'unresolved') {
+            found.push({
+                ...occurrence,
+                message: `RequireOnRails: "${spec}" does not resolve — ${resolution.message}.`
+            });
+        }
+    }
+
+    return found;
+}
+
 module.exports = {
     REQUIRE_STRING,
     RESERVED_ALIASES,
@@ -600,6 +655,7 @@ module.exports = {
     renderRequire,
     rankByDistance,
     findRequireStrings,
+    findUnresolvedRequires,
     // Exported for tests and shared path math
     baseDir,
     modulePathOf,
