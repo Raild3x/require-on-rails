@@ -249,7 +249,9 @@ All options are passed to `RequireOnRails.create { … }`:
 | `Ancestors` | `{ [string]: Instance \| string }?` | `nil` | **Deprecated.** Accepted for backwards compatibility; merged into `Aliases` at `create()` time (`Aliases` takes precedence on key conflicts). Prefer `Aliases` for new code. |
 | `IgnorePredicate` | `((Instance) -> boolean)?` | `nil` | Called on each container during search; return `true` to skip that subtree. |
 | `Debug` | `boolean?` | `false` | Prints detailed resolution steps to the output. |
-| `MaxSearchDepth` | `number?` | `50` | Maximum folder depth for ambiguous searches. Does not apply to explicit absolute paths. |
+| `SearchMode` | `"Nearest" \| "Unique"` | `"Nearest"` | How `@Name` requires resolve. `"Nearest"` searches everything under the requiring script's folder, then under each parent in turn, and returns the shallowest match in the first level that has one (ties: `PathPriority`, then full name). A neighbour's module five folders deep beats a shallow one a level further up, and no VM walks the whole tree up front. `"Unique"` mirrors dynamic mode's alias rules: a duplicate name errors unless `PathPriority` picks a winner; it indexes every module once per VM on the first `@Name` lookup. Use `"Unique"` with the same priorities as your `pathPriority` setting to make runtime resolution match the generated aliases exactly. |
+| `PathPriority` | `{ Instance }?` | `{}` | Ordered tie-breakers, highest first; a module matches an entry when it is that Instance or a descendant of it. Runtime counterpart of the `pathPriority` setting. |
+| `MaxSearchDepth` | `number?` | `50` | Maximum folder depth below each searched level in `"Nearest"` mode. Ignored by `"Unique"` and by explicit absolute paths. |
 | `CaseSensitive` | `boolean?` | `true` | When `false`, path segments are matched case-insensitively. |
 | `DisableCache` | `boolean?` | `false` | When `true`, skips the module-path → instance lookup cache, re-resolving on every call. Native Luau `require()` still caches module execution results. |
 

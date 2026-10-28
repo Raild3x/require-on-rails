@@ -34,7 +34,14 @@ return function(t)
 	--  │   ├── CircDepA      (ModuleScript)    requires CircDepB through Import.__call  ┐ form a cycle
 	--  │   ├── CircDepB      (ModuleScript)    requires CircDepA through Import.__call  ┘
 	--  │   ├── YieldingModule (ModuleScript)   calls task.wait() then returns "yielding_module"
-	--  │   └── SharedName    (ModuleScript)    returns "root_shared"
+	--  │   ├── SharedName    (ModuleScript)    returns "root_shared"
+	--  │   ├── AFolder/Deep/Deeper/Dist (ModuleScript) returns "dist_deep"     ┐ same name,
+	--  │   ├── ZFolder/Dist  (ModuleScript)    returns "dist_shallow"          ┘ different distance
+	--  │   ├── TieA/Tie      (ModuleScript)    returns "tie_a"                 ┐ same name,
+	--  │   ├── TieB/Tie      (ModuleScript)    returns "tie_b"                 ┘ same distance
+	--  │   ├── ScopeTest/Caller (ModuleScript) returns "caller"                  context for scope tests
+	--  │   ├── ScopeTest/Neighbor/L1/L2/L3/L4/Scoped (ModuleScript) "scoped_deep"  ┐ same name: deep in
+	--  │   └── Scoped        (ModuleScript)    returns "scoped_outer"             ┘ scope vs shallow above
 	--  └── RoR_OtherRoot (Folder)              ← "Other" ancestor key (multi-ancestor tests)
 	--      ├── ModuleE       (ModuleScript)    returns "module_e"
 	--      └── SharedName    (ModuleScript)    returns "other_shared"
@@ -68,6 +75,8 @@ return function(t)
 			MaxSearchDepth        = o.MaxSearchDepth,
 			CaseSensitive         = o.CaseSensitive,
 			DisableCache          = o.DisableCache,
+			SearchMode            = o.SearchMode,
+			PathPriority          = o.PathPriority,
 		}
 	end
 
@@ -783,6 +792,120 @@ return function(t)
 	-- end)
 
 	-- ── Debug output ──────────────────────────────────────────────────────────────
+
+	describe("Nearest search", function()
+		test("within one level the shallowest match wins over discovery order", function()
+			-- ZFolder/Dist is 2 folders below root, AFolder/Deep/Deeper/Dist is 4
+			expect(makeImport()("@Dist")).is("dist_shallow")
+		end)
+
+		test("a deep match in the requirer's own scope beats a shallow one further up", function()
+			-- Neighbor/L1/L2/L3/L4/Scoped shares ScopeTest with the caller;
+			-- root.Scoped is only one folder deep but needs a step up out of ScopeTest
+			local importFn = RequireOnRails.create(makeConfig())(root.ScopeTest.Caller)
+			expect(importFn("@Scoped")).is("scoped_deep")
+		end)
+
+		test("leaving the scope finds the outer match", function()
+			expect(makeImport()("@Scoped")).is("scoped_outer")
+		end)
+
+		test("equally near candidates break the tie alphabetically by full name", function()
+			expect(makeImport()("@Tie")).is("tie_a")
+		end)
+
+		test("PathPriority breaks equal-distance ties ahead of the name", function()
+			expect(makeImport(nil, { PathPriority = { root.TieB } })("@Tie")).is("tie_b")
+		end)
+
+		test("PathPriority never overrides a nearer candidate", function()
+			-- From inside TieB, its own Tie is 1 step away and TieA's is 3
+			local importFn = RequireOnRails.create(makeConfig({ PathPriority = { root.TieA } }))(root.TieB.Tie)
+			expect(importFn("@Tie")).is("tie_b")
+		end)
+
+		test("contexts of one generator reuse each other's tree snapshot", function()
+			local calls = 0
+			local gen = RequireOnRails.create(makeConfig({
+				IgnorePredicate = function(_inst: Instance)
+					calls += 1
+					return false
+				end,
+			}))
+			gen(moduleA)("@ModuleD") -- starts at root
+			local afterFirst = calls
+			gen(moduleC)("@ModuleD") -- starts at SubFolder: new start, same containers
+			expect(afterFirst).is_greater_than(0)
+			expect(calls).is(afterFirst)
+		end)
+
+		test("a module added after a failed lookup is found", function()
+			local importFn = makeImport()
+			expect(function()
+				importFn("@LateAdded_xyz")
+			end).fails_with("not found")
+
+			local late = moduleA:Clone()
+			late.Name = "LateAdded_xyz"
+			late.Parent = subFolder
+			expect(importFn("@LateAdded_xyz")).is("module_a")
+			late:Destroy()
+		end)
+	end)
+
+	-- ── Unique search ────────────────────────────────────────────────────────────
+	--
+	-- SearchMode = "Unique" mirrors the tool's dynamic-mode alias rules: a name
+	-- owned by one module resolves anywhere; duplicates need PathPriority, and
+	-- only resolve when one candidate sits under the highest matching entry.
+
+	describe("Unique search", function()
+		local function makeUnique(overrides: { [string]: any }?, contextInst: Instance?)
+			local o = table.clone(overrides or {})
+			o.SearchMode = "Unique"
+			return RequireOnRails.create(makeConfig(o))(contextInst or context)
+		end
+
+		test("a unique name resolves regardless of context", function()
+			expect(makeUnique(nil, moduleD)("@ModuleA")).is("module_a")
+		end)
+
+		test("an unknown name errors with 'not found'", function()
+			expect(function()
+				makeUnique()("@TotallyNonExistent_xyz123")
+			end).fails_with("not found")
+		end)
+
+		test("a duplicate name without PathPriority errors as ambiguous", function()
+			expect(function()
+				makeUnique()("@Tie")
+			end).fails_with("ambiguous")
+		end)
+
+		test("PathPriority picks the one candidate under the matching entry", function()
+			expect(makeUnique({ PathPriority = { root.TieB } })("@Tie")).is("tie_b")
+		end)
+
+		test("candidates tied under the highest matching entry stay ambiguous", function()
+			-- root contains both Ties; the later TieB entry is never consulted
+			expect(function()
+				makeUnique({ PathPriority = { root, root.TieB } })("@Tie")
+			end).fails_with("ambiguous")
+		end)
+
+		test("duplicates across ancestors resolve through PathPriority", function()
+			local o = { Aliases = { Root = root, Other = otherRoot } }
+			expect(function() makeUnique(o)("@SharedName") end).fails_with("ambiguous")
+			o.PathPriority = { otherRoot }
+			expect(makeUnique(o)("@SharedName")).is("other_shared")
+		end)
+
+		test("an invalid SearchMode errors at creation time", function()
+			expect(function()
+				RequireOnRails.create(makeConfig({ SearchMode = "Closest" }))
+			end).fails_with("SearchMode")
+		end)
+	end)
 
 	describe("Debug output", function()
 		test("Debug = true emits [RequireOnRails DEBUG] prints during resolution", function()

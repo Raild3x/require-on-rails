@@ -2,7 +2,6 @@
 -- Shared type definitions used across RequireOnRails submodules.
 
 export type ModuleCache = { [string]: ModuleScript }
-export type ContextCache = { [Instance]: ModuleCache }
 
 export type Config = {
 	-- Maps keys to either an Instance (ancestor root) or a string alias that
@@ -16,6 +15,13 @@ export type Config = {
 	MaxSearchDepth: number?,
 	CaseSensitive: boolean?,
 	DisableCache: boolean?,
+	-- How ambiguous `@Name` requires resolve: "Nearest" (default) picks the module
+	-- with the fewest tree steps from the requirer; "Unique" mirrors the tool's
+	-- dynamic mode and errors on duplicate names PathPriority does not resolve.
+	SearchMode: ("Nearest" | "Unique")?,
+	-- Ordered tie-breakers, highest priority first. A module matches an entry
+	-- when it is that Instance or a descendant of it.
+	PathPriority: { Instance }?,
 }
 
 return {}

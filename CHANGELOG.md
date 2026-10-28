@@ -37,6 +37,24 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - **Dynamic-mode rename handling ignored `requireonrails.json`**: `enableBasenameUpdates`, `enableAbsolutePathUpdates`, `enableFileNameCollisionResolution`, `manualAliases`, and the scan settings were read from VS Code's configuration only, so values set in the Project settings file had no effect on renames. They now come from the same resolved settings as everything else, and a settings file with errors stops rename rewrites in both modes. The basename rewrite also keeps each require's quote style (it always wrote single quotes), matches the name exactly (a name containing `.` used to match as a regex), leaves commented-out lines alone, and reports one summary instead of a notification per updated file. Renaming something that is not a module (a non-Luau file, a folder without an init file, a file outside `directoriesToScan`) no longer offers to rewrite `@Name` requires, and the rewrite is skipped while another module still owns the old name — both used to break requires that pointed at an unrelated module.
 - **Collision resolution could fail to rename**: The `_Duplicate` name was made by replacing the first occurrence of the basename anywhere in the path, so renaming `src/Utilities/Bar.luau` to `Util.luau` tried to move it to `src/Util_Duplicateities/Util.luau` and threw. Only the file name is changed now, and an existing `_Duplicate` file is never overwritten. Collisions are judged by the alias they would produce, so `.server`/`.client` scripts, ignored directories, and other `init.luau` files (renaming a file to `init.luau` used to rename it again to `init_Duplicate.luau`) no longer count as clashes.
 
+## [Luau Module 0.3.0] - 2026-10-28
+
+### Luau Module (v0.3.0)
+
+#### Breaking Changes
+- **Ambiguous `@Name` results can differ when a name is duplicated**: The search used to go depth-first through each level, so which of two same-named modules won depended on child order, and a deep match could beat a shallow one in the same folder. The default `"Nearest"` mode keeps the walk-up model (the requirer's folder first, then each parent) but takes the shallowest match within a level, breaking ties by `PathPriority`, then alphabetically by full name. Other registered roots are searched nearest-first instead of in table order. Projects with unique module names resolve exactly as before.
+- **`MaxSearchDepth` now also limits the search into other roots**: The fallback search tracked path segments instead of folder depth, so the setting never limited it.
+
+#### Added
+- **`SearchMode` config option**: `"Nearest"` (default) resolves `@Name` to the module closest in scope to the requiring script, so a neighbour's module five folders deep beats a shallow one a level further up. `"Unique"` mirrors the extension's dynamic-mode alias rules: a duplicate name errors unless exactly one candidate sits under the highest-priority matching `PathPriority` entry, so the runtime loads the same module the generated aliases type against.
+- **`PathPriority` config option**: An ordered list of Instances, the runtime counterpart of the `pathPriority` setting. A module matches an entry when it is that Instance or a descendant of it.
+
+#### Changed
+- **Ambiguous search is roughly 100× faster**: Results were cached per requiring script, so 800 modules requiring `@Constants` ran 800 tree walks, and a module in another root was only reached after scanning the requirer's whole root — measured at ~2 s of client boot in one project. Each generator now keeps a lazily built snapshot of the tree, shared by every script in the VM: a folder's children are read from the engine once, the first time any search reaches it, and each level a search passes through is indexed by name in one scan. No search walks the whole tree up front, so each Actor only reads the part of the tree its own scripts search (`"Unique"` does one full walk per VM, since proving a name unique means seeing every module). On a synthetic 3,400-require tree shaped like that project, search time fell from ~500 ms to ~4 ms with identical results.
+- **Fewer event connections**: The per-script cache connected `AncestryChanged` once per script and once per cached require. The search now listens for `DescendantAdded`/`DescendantRemoving` on each registered root and invalidates only what changed.
+
+---
+
 ## [2.2.0] - 2026-07-27
 
 ### Extension

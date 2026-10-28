@@ -49,8 +49,8 @@
 	local Types = require("@Shared/Types")
 	local PlayerService = require("@Server/Services/PlayerService")
 
-	-- Import using ambiguous paths (searches from current context; down and then up (BFS))
-	-- This will search for the nearest module named "Config".
+	-- Import using ambiguous paths. With the default SearchMode "Nearest" this
+	-- finds the module named "Config" with the fewest tree steps from this script.
 	local Config = require("@Config")
 	```
 
@@ -67,10 +67,10 @@ local Search = require(script.Search)
 export type Config = Types.Config
 export type ContextualImportGenerator = (Instance) -> typeof(require)
 
-type ModuleCache  = Types.ModuleCache
-type ContextCache = Types.ContextCache
+type ModuleCache = Types.ModuleCache
 
 local RESERVED_ALIASES = { "self", "game" }
+local SEARCH_MODES     = { "Nearest", "Unique" }
 
 
 --[=[
@@ -116,6 +116,18 @@ local function CreateImportGenerator(_config: Config): ContextualImportGenerator
 	local config       = _config or {} :: Config
 	local debug        = config.Debug or false
 	local disableCache = config.DisableCache == true
+	local searchMode   = config.SearchMode or "Nearest"
+
+	assert(
+		table.find(SEARCH_MODES, searchMode),
+		`RequireOnRails: 'SearchMode' must be "Nearest" or "Unique", got {searchMode}`
+	)
+	if config.PathPriority ~= nil then
+		assert(typeof(config.PathPriority) == "table", "RequireOnRails: 'PathPriority' must be an array of Instances")
+		for _, entry in config.PathPriority do
+			assert(typeof(entry) == "Instance", "RequireOnRails: 'PathPriority' must be an array of Instances")
+		end
+	end
 
 	-- Build the merged alias table. config.Aliases is the primary field; config.Ancestors
 	-- is accepted for backwards compatibility and is merged in (Aliases takes precedence).
@@ -177,32 +189,10 @@ local function CreateImportGenerator(_config: Config): ContextualImportGenerator
 	end)(), "string aliases")
 
 	local unambiguousCache: ModuleCache = {}
-	local contextCache: ContextCache    = {}
+	local searcher = Search.new(ancestorsArray, config)
 
 	local function requireModule(module: ModuleScript): any
 		return require(module) :: any
-	end
-
-	--[=[
-		Returns the `ModuleCache` for `context`, creating and registering one if needed.
-		Connects an `AncestryChanged` listener to flush and remove cache state
-		when the context is detached from the data model.
-	]=]
-	local function getCacheForContext(context: Instance): ModuleCache
-		if contextCache[context] then return contextCache[context] end
-		local newCache: ModuleCache = {}
-		contextCache[context] = newCache
-
-		local ancestryConnection: RBXScriptConnection
-		ancestryConnection = context.AncestryChanged:Connect(function(_, newParent)
-			debugLog(debug, "Cache cleared for detached context", context.Name)
-			for k in newCache do
-				newCache[k] = nil
-			end
-			contextCache[context] = nil
-			ancestryConnection:Disconnect()
-		end)
-		return newCache
 	end
 
 	--[=[
@@ -246,15 +236,13 @@ local function CreateImportGenerator(_config: Config): ContextualImportGenerator
 
 	--[=[
 		Produces a `Require` function scoped to the given `root` instance.
-		`root` is used as the local context for ambiguous path resolution and
-		per-context caching.
+		`root` is the starting point for `Nearest` ambiguous resolution.
 
 		@param root -- The module's own `script` instance
 		@return     -- A `Require` function scoped to `root`
 	]=]
 	local function generateImport(root: Instance): typeof(require)
 		assert(root:IsA("Instance"), "Root must be a valid Instance")
-		local cache = getCacheForContext(root)
 
 		-- Walk up to find the closest registered ancestor
 		local primaryRoot: Instance? = nil
@@ -278,12 +266,12 @@ local function CreateImportGenerator(_config: Config): ContextualImportGenerator
 			- **Non-`@` string** — falls through to native `require`.
 			- **`@AncestorKey/...`** — absolute traversal from a registered ancestor;
 			  subsequent segments may include `..` to climb above the anchor.
-			- **`@Name/...`** — ambiguous BFS search for `Name`, then traversal of
-			  any remaining segments (including `..`) from the found instance.
-			- **`@Name`** — ambiguous BFS search, result is the found module.
+			- **`@Name/...`** — ambiguous search for `Name` (per `SearchMode`), then
+			  traversal of any remaining segments (including `..`) from the found instance.
+			- **`@Name`** — ambiguous search, result is the found module.
 
-			Results are cached globally for absolute paths and per-context for
-			ambiguous paths (since the found instance depends on call-site context).
+			Absolute paths are cached by path string. Ambiguous lookups are cached
+			inside the Searcher, shared by every context of this generator.
 		]=]
 		local function Require(target: string | Instance): any
 			-- Direct Instance reference
@@ -307,11 +295,6 @@ local function CreateImportGenerator(_config: Config): ContextualImportGenerator
 
 			local resolvedTarget = resolveAlias(target, aliasMap)
 			debugLog(debug, "Resolving:", target, "->", resolvedTarget)
-
-			-- Context-local cache hit
-			if not disableCache and cache[resolvedTarget] then
-				return requireModule(cache[resolvedTarget])
-			end
 
 			-- Global unambiguous cache hit
 			if not disableCache and unambiguousCache[resolvedTarget] then
@@ -347,18 +330,14 @@ local function CreateImportGenerator(_config: Config): ContextualImportGenerator
 			-- ── Ambiguous path: @ModuleName/optional/further/segments ────
 			-- Search for the first segment as a module name, then traverse
 			-- any remaining segments (which may include "..") from it.
-			-- Result is context-dependent so it lives in the per-context cache.
 			if not primaryRoot then
 				error(`Cannot resolve "{resolvedTarget}": no valid ancestor found for context`)
 			end
 
-			local found = Search.searchForModule(root, firstSeg, ancestorsArray, config)
-			if not found then
-				local others = table.clone(ancestorsArray)
-				local idx = table.find(others, primaryRoot)
-				if idx then table.remove(others, idx) end
-				found = Search.searchRoots(others, { firstSeg }, config)
-			end
+			if disableCache then searcher.reset() end
+			local found = if searchMode == "Unique"
+				then searcher.unique(firstSeg)
+				else searcher.nearest(root, firstSeg)
 
 			if not found then
 				error(`Module "{resolvedTarget}" not found in any valid ancestor.`)
@@ -368,16 +347,7 @@ local function CreateImportGenerator(_config: Config): ContextualImportGenerator
 			-- starting from the resolved module instance.
 			local inst = traverseSegments(found, { table.unpack(pathParts, 2) }, resolvedTarget)
 			assert(inst:IsA("ModuleScript"), `"{resolvedTarget}" is not a ModuleScript`)
-			local module = inst :: ModuleScript
-
-			if not disableCache then
-				cache[resolvedTarget] = module
-				module.AncestryChanged:Once(function()
-					cache[resolvedTarget] = nil
-				end)
-			end
-
-			return requireModule(module)
+			return requireModule(inst :: ModuleScript)
 		end
 
 		return Require
